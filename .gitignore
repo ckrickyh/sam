@@ -1,0 +1,38 @@
+# Python 編譯暫存
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# 虛擬環境
+.venv/
+
+# AI 模型權重檔案 (嚴禁上傳大於 100MB 檔案至 GitHub)
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.onnx
+sam3.pt
+
+# 模型快取與本機快取目錄
+.cache/
+.pytest_cache/
+
+# 輸出圖檔 (僅忽略運算產出結果，保留原始輸入資料)
+data/*_segmented.png
+data/*_density.png
+data/output/
+
+# macOS / 系統環境垃圾檔
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+
+# 編輯器與環境變數檔案
+.vscode/
+.idea/
+.env
