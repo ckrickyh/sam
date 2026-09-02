@@ -36,3 +36,22 @@ Thumbs.db
 .vscode/
 .idea/
 .env
+
+runs/
+
+*.log
+node_modules/
+*/node_modules/
+*.mlpackage/
+
+# 忽略 YOLO 訓練圖檔 (248 MB) 與訓練掃描快取
+dataset/images/
+dataset/labels/*.cache
+*.cache
+# 若想連同 data/ 原始高解析圖檔一起排除
+data/*.jpg
+data/*.jpeg
+data/*.png
+# 忽略所有模組的輸出目錄 (包含 simpleSam/output/, ultralystic/output/, samplingAnalysis/output/)
+**/output/
+output/
