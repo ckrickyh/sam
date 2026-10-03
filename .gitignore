@@ -55,3 +55,7 @@ data/*.png
 # 忽略所有模組的輸出目錄 (包含 simpleSam/output/, ultralystic/output/, samplingAnalysis/output/)
 **/output/
 output/
+
+# deprecated
+**/.trash/
+.trash/
