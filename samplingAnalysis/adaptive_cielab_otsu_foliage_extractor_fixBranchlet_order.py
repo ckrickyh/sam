@@ -1,21 +1,17 @@
-"""自適應 CIELAB a* 樹葉密度與孔隙分析引擎 (主角樹評分排序 + 文字提示與幾何方框版)
-檔案路徑：samplingAnalysis/adaptive_cielab_otsu_foliage_extractor_fixBranchlet_order_box2.py
+"""自適應 CIELAB a* 樹葉密度與孔隙分析引擎 (主角樹評分排序 + 語意骨架補洞版)
+檔案路徑：samplingAnalysis/adaptive_cielab_otsu_foliage_extractor_fixBranchlet_order.py
 
 核心升級重點：
-1. 語意文字提示與幾何方框提示雙模支援 (Text & Box Prompt Architecture)：
-   - 正向樹冠預設採用語意文字提示 "tree subcanopy" 進行全域偵測。
-   - 若使用者或 Web 介面 (app.py) 指定 canopy_box，則無縫切換或套用幾何方框約束。
-   - 支援自動歸一化 [xmin, ymin, xmax, ymax] 像素或比例座標至 [cx, cy, w, h]。
+1. 階層超遮罩過濾 (Hierarchical Mega-Mask Suppression)：
+   - 剔除 SAM 3 產生的全景聚合超遮罩，防止背景聚合假遮罩干擾。
 2. 前景主角樹評分排序 (Focus-Primary Tree Priority Scoring)：
    - 結合高斯居中度 (45%)、樹冠外包絡規模 (25%)、前景地基錨點 (20%) 與模型信心度 (10%)。
    - 鎖定綜合評分最高者為唯一的「主角樹」(Primary Tree)，其餘樹木自動歸為「周邊樹」(Nearby Trees)。
-3. 幾何/語意骨架 + OpenCV 拓撲補洞修復 (Hybrid Semantic Trunk & Hole Inpainting)：
-   - 支援方框或語意提示分離樹幹，解決非啡色樹皮的認知問題。
-   - 導入 OpenCV 外部輪廓填洞 (RETR_EXTERNAL) 與形態學閉運算，消除 SAM 3 抽樣產生的圓形黑洞斑點。
+3. 語意骨架 + OpenCV 拓撲補洞修復 (Hybrid Semantic Trunk & Hole Inpainting)：
+   - 保留 SAM 3 樹幹提示詞，解決白樺、尤加利灰白、陰雨發黑等非啡色樹皮的語意認知問題。
+   - 導入 OpenCV 外部輪廓填洞 (RETR_EXTERNAL) 與形態學閉運算，徹底消除 SAM 3 抽樣產生的圓形黑洞斑點。
    - 結合微觀逆光細枝條提取 (L* < 95) 與嚴格綠葉保護盾 (ExG + HSV)。
 4. 4 面板高對比專業視覺化：
-   - Panel 1：原圖標註樹冠提示範圍。
-   - Panel 2：CIELAB a* 物理色度圖。
    - Panel 3：明確標註主角樹 (亮綠+黃框)、周邊樹 (淡藍+青框) 與木質部 (橘色)。
    - Panel 4：針對主角樹進行微觀三色無損診斷 (純葉片、內部透光孔隙、平滑木質結構)。
 """
@@ -37,51 +33,6 @@ if str(project_root) not in sys.path:
 
 from sam3.model.sam3_image_processor import Sam3Processor
 from sam3.model_builder import build_sam3_image_model
-
-
-def parse_box_to_normalized_cxcywh(
-    box: list[float] | tuple[float, float, float, float],
-    img_w: int,
-    img_h: int,
-) -> list[float]:
-    """將 [xmin, ymin, xmax, ymax] 座標統一轉換為 SAM 3 所需之歸一化 [center_x, center_y, width, height]"""
-    x1, y1, x2, y2 = box
-    if max(x1, y1, x2, y2) > 1.0:
-        x1 = x1 / img_w
-        x2 = x2 / img_w
-        y1 = y1 / img_h
-        y2 = y2 / img_h
-
-    xmin = max(0.0, min(1.0, min(x1, x2)))
-    xmax = max(0.0, min(1.0, max(x1, x2)))
-    ymin = max(0.0, min(1.0, min(y1, y2)))
-    ymax = max(0.0, min(1.0, max(y1, y2)))
-
-    bw = max(1e-4, xmax - xmin)
-    bh = max(1e-4, ymax - ymin)
-    cx = xmin + bw / 2.0
-    cy = ymin + bh / 2.0
-    return [float(cx), float(cy), float(bw), float(bh)]
-
-
-def parse_box_to_pixel_xyxy(
-    box: list[float] | tuple[float, float, float, float],
-    img_w: int,
-    img_h: int,
-) -> tuple[int, int, int, int]:
-    """將方框座標統一轉換為影像像素尺度 [xmin, ymin, xmax, ymax]，供繪圖標記使用"""
-    x1, y1, x2, y2 = box
-    if max(x1, y1, x2, y2) <= 1.0:
-        x1 = x1 * img_w
-        x2 = x2 * img_w
-        y1 = y1 * img_h
-        y2 = y2 * img_h
-
-    xmin = int(round(max(0, min(img_w - 1, min(x1, x2)))))
-    xmax = int(round(max(0, min(img_w - 1, max(x1, x2)))))
-    ymin = int(round(max(0, min(img_h - 1, min(y1, y2)))))
-    ymax = int(round(max(0, min(img_h - 1, max(y1, y2)))))
-    return (xmin, ymin, xmax, ymax)
 
 
 def get_optimal_device() -> str:
@@ -273,15 +224,13 @@ def process_image_cielab_adaptive(
     image_path: str | Path,
     processor: Sam3Processor,
     prompt: str = "tree subcanopy",
-    canopy_box: list[float] | tuple[float, float, float, float] | None = None,
-    trunk_box: list[float] | tuple[float, float, float, float] | None = None,
     negative_prompt: str = "tree trunk, tree branch",
     confidence_threshold: float = 0.25,
     negative_threshold: float = 0.155,
     output_dir: Path | None = None,
     artifact_dir: Path | None = None,
 ) -> dict:
-    """針對單張影像執行主角樹文字提示 (Text Prompt: tree subcanopy) 與方框 (Box Prompt) 評分排序、樹幹修復與自適應 CIELAB a* 拓撲分析"""
+    """針對單張影像執行主角樹評分排序、語意樹幹修復與自適應 CIELAB a* 拓撲分析"""
     img_path = Path(image_path)
     if not img_path.exists():
         raise FileNotFoundError(f"找不到檔案：{image_path}")
@@ -294,16 +243,9 @@ def process_image_cielab_adaptive(
 
     state = processor.set_image(raw_img)
 
-    # 1. SAM 3 正向樹冠推論：若提供 canopy_box 則使用幾何約束；否則使用文字提示 "tree subcanopy"
+    # 1. SAM 3 正向樹冠多實例推論
     processor.set_confidence_threshold(confidence_threshold)
-    canopy_pixel_xyxy = None
-    if canopy_box is not None:
-        canopy_cxcywh = parse_box_to_normalized_cxcywh(canopy_box, w, h)
-        canopy_pixel_xyxy = parse_box_to_pixel_xyxy(canopy_box, w, h)
-        res_canopy = processor.add_geometric_prompt(box=canopy_cxcywh, label=True, state=state)
-    else:
-        res_canopy = processor.set_text_prompt(prompt=prompt, state=state)
-
+    res_canopy = processor.set_text_prompt(prompt=prompt, state=state)
     raw_canopy = res_canopy.get("masks", None)
     boxes = res_canopy.get("boxes", None)
     scores = res_canopy.get("scores", None)
@@ -316,43 +258,30 @@ def process_image_cielab_adaptive(
     # 綠色植物保護遮罩
     green_mask = extract_green_vegetation_mask(img_rgb)
 
-    # 2. SAM 3 樹幹幾何/語意推論 (優先使用 trunk_box，未提供則使用語意提示)
+    # 2. SAM 3 語意木質樹幹推論 (處理非啡色樹皮)
     processor.set_confidence_threshold(negative_threshold)
     trunk_mask = np.zeros((h, w), dtype=bool)
-
-    # 重置提示詞狀態 (保留已計算之視覺 Backbone 特徵，零額外耗時)
-    processor.reset_all_prompts(state)
-
-    if trunk_box is not None:
-        trunk_cxcywh = parse_box_to_normalized_cxcywh(trunk_box, w, h)
-        res_trunk = processor.add_geometric_prompt(box=trunk_cxcywh, label=True, state=state)
-        raw_trunk = res_trunk.get("masks", None)
-        scores_trunk = res_trunk.get("scores", None)
-    elif negative_prompt and negative_prompt.strip():
+    if negative_prompt and negative_prompt.strip():
         res_trunk = processor.set_text_prompt(prompt=negative_prompt, state=state)
         raw_trunk = res_trunk.get("masks", None)
         scores_trunk = res_trunk.get("scores", None)
-    else:
-        raw_trunk = None
-        scores_trunk = None
-
-    if raw_trunk is not None and len(raw_trunk) > 0:
-        trunk_np = raw_trunk.cpu().numpy().astype(bool)
-        if trunk_np.ndim == 4:
-            trunk_np = trunk_np.squeeze(1)
-        elif trunk_np.ndim == 3 and trunk_np.shape[0] == 1 and trunk_np.shape[1] != h:
-            trunk_np = trunk_np.squeeze(0)
-        for idx_t, m in enumerate(trunk_np):
-            m_area = int(np.sum(m))
-            if m_area == 0:
-                continue
-            t_score = float(scores_trunk[idx_t].item()) if scores_trunk is not None else 0.5
-            green_overlap = int(np.sum(m & green_mask))
-            green_ratio = green_overlap / m_area
-            # 若遮罩包含大量鮮綠葉片 (>40%) 且信心度偏低 (<0.40)，判定為枝幹幻覺遮罩排除
-            if green_ratio > 0.40 and t_score < 0.40:
-                continue
-            trunk_mask |= m
+        if raw_trunk is not None and len(raw_trunk) > 0:
+            trunk_np = raw_trunk.cpu().numpy().astype(bool)
+            if trunk_np.ndim == 4:
+                trunk_np = trunk_np.squeeze(1)
+            elif trunk_np.ndim == 3 and trunk_np.shape[0] == 1 and trunk_np.shape[1] != h:
+                trunk_np = trunk_np.squeeze(0)
+            for idx_t, m in enumerate(trunk_np):
+                m_area = int(np.sum(m))
+                if m_area == 0:
+                    continue
+                t_score = float(scores_trunk[idx_t].item()) if scores_trunk is not None else 0.5
+                green_overlap = int(np.sum(m & green_mask))
+                green_ratio = green_overlap / m_area
+                # 若遮罩包含大量鮮綠葉片 (>40%) 且信心度偏低 (<0.40)，判定為枝幹幻覺遮罩排除
+                if green_ratio > 0.40 and t_score < 0.40:
+                    continue
+                trunk_mask |= m
 
     # 3. 實例遮罩提取與初步淨化
     c_np = raw_canopy.cpu().numpy().astype(bool)
@@ -519,37 +448,9 @@ def process_image_cielab_adaptive(
     fig, axes = plt.subplots(2, 2, figsize=(16, 12), dpi=150)
     plt.subplots_adjust(wspace=0.08, hspace=0.14)
 
-    # Panel 1: 原圖與提示資訊
-    panel1_img = img_rgb.copy()
-    if canopy_pixel_xyxy is not None:
-        bx1, by1, bx2, by2 = canopy_pixel_xyxy
-        cv2.rectangle(panel1_img, (bx1, by1), (bx2, by2), (0, 255, 255), 3)
-        cv2.putText(
-            panel1_img,
-            f"Box Prompt [{bx1},{by1},{bx2},{by2}]",
-            (bx1 + 10, max(30, by1 + 32)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            (0, 255, 255),
-            2,
-            cv2.LINE_AA,
-        )
-        title_p1 = f"(A) Input & Box Prompt: {img_path.name}"
-    else:
-        cv2.putText(
-            panel1_img,
-            f"Prompt: {prompt}",
-            (16, 36),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            (0, 255, 255),
-            2,
-            cv2.LINE_AA,
-        )
-        title_p1 = f"(A) Input & Text Prompt ({prompt}): {img_path.name}"
-
-    axes[0, 0].imshow(panel1_img)
-    axes[0, 0].set_title(title_p1, fontsize=13, fontweight="bold")
+    # Panel 1: 原圖
+    axes[0, 0].imshow(img_rgb)
+    axes[0, 0].set_title(f"(A) Input: {img_path.name}", fontsize=13, fontweight="bold")
     axes[0, 0].axis("off")
 
     # Panel 2: CIELAB a* 色度圖
@@ -630,9 +531,7 @@ def process_image_cielab_adaptive(
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Adaptive CIELAB a* Foliage & Gap Analyzer with Primary Tree Scoring (Box Prompt Edition)"
-    )
+    parser = argparse.ArgumentParser(description="Adaptive CIELAB a* Foliage & Gap Analyzer with Primary Tree Scoring")
     parser.add_argument("--data-dir", type=str, default="data", help="輸入照片目錄 (預設: data)")
     parser.add_argument("--images", nargs="+", default=None, help="指定測試影像清單 (若未指定，則自動掃描 --data-dir)")
     parser.add_argument("--max-images", type=int, default=None, help="最大處理照片數量 (預設無限制)")
@@ -640,36 +539,7 @@ def main():
     parser.add_argument("--device", type=str, default=None, help="運算裝置 (cuda/cpu，預設自動偵測)")
     parser.add_argument("--output-dir", type=str, default="samplingAnalysis/output", help="輸出圖檔目錄")
     parser.add_argument("--artifact-dir", type=str, default=None, help="Artifact 輸出目錄")
-    parser.add_argument("--csv-name", type=str, default="cielab_otsu_summary_box.csv", help="量化結果 CSV 檔名")
-    parser.add_argument(
-        "--prompt",
-        type=str,
-        default="tree subcanopy",
-        help="正向樹冠語意提示詞 (預設: tree subcanopy，若未指定 --box 則啟用此文字提示)",
-    )
-    parser.add_argument(
-        "--box",
-        "--canopy-box",
-        nargs=4,
-        type=float,
-        default=None,
-        help="樹冠幾何方框提示 [xmin ymin xmax ymax] (支援像素值或 0~1 比例，若未指定則使用 --prompt)",
-    )
-    parser.add_argument(
-        "--trunk-box",
-        nargs=4,
-        type=float,
-        default=None,
-        help="樹幹幾何方框提示 [xmin ymin xmax ymax] (若未指定，則自動使用 negative-prompt 語意提示)",
-    )
-    parser.add_argument(
-        "--negative-prompt",
-        type=str,
-        default="tree trunk, tree branch",
-        help="樹幹備用語意提示詞 (當未指定 --trunk-box 時生效)",
-    )
-    parser.add_argument("--confidence-threshold", type=float, default=0.25, help="樹冠偵測信心門檻 (預設: 0.25)")
-    parser.add_argument("--negative-threshold", type=float, default=0.155, help="樹幹偵測信心門檻 (預設: 0.155)")
+    parser.add_argument("--csv-name", type=str, default="cielab_otsu_summary.csv", help="量化結果 CSV 檔名")
     args = parser.parse_args()
 
     # 1. 蒐集待處理影像清單
@@ -695,15 +565,14 @@ def main():
 
     run_device = args.device if args.device else get_optimal_device()
     print(f"==================================================")
-    print(f"★ 批次掃描目標：共 {total_images} 張影像")
-    print(f"★ 樹冠提示模式：{'Box Prompt: ' + str(args.box) if args.box else 'Text Prompt: ' + repr(args.prompt)}")
+    print(f"★ 批次掃描目標：共 {total_images} 張影像 (來源: {args.data_dir if not args.images else '指定列表'})")
     print(f"★ 輸出圖檔目錄：{out_dir}")
     print(f"★ 正在載入 SAM 3 模型: {args.checkpoint} ({run_device})...")
     print(f"==================================================")
 
     model = build_sam3_image_model(checkpoint_path=args.checkpoint, device=run_device)
     model = model.to(run_device).float()
-    processor = Sam3Processor(model, device=run_device, confidence_threshold=args.confidence_threshold)
+    processor = Sam3Processor(model, device=run_device, confidence_threshold=0.25)
 
     results = []
     for idx, img_p in enumerate(image_list, start=1):
@@ -712,12 +581,6 @@ def main():
             res = process_image_cielab_adaptive(
                 image_path=img_p,
                 processor=processor,
-                prompt=args.prompt,
-                canopy_box=args.box,
-                trunk_box=args.trunk_box,
-                negative_prompt=args.negative_prompt,
-                confidence_threshold=args.confidence_threshold,
-                negative_threshold=args.negative_threshold,
                 output_dir=out_dir,
                 artifact_dir=art_dir,
             )
@@ -734,7 +597,7 @@ def main():
         df.to_csv(csv_path, index=False, encoding="utf-8-sig")
         print(f"\n★ 批次量化報表已儲存至：{csv_path}")
 
-    print("\n主角樹評分與拓撲補洞自適應分析 (Box Prompt 版) 全部完成！輸出圖檔已儲存。")
+    print("\n主角樹評分與拓撲補洞自適應分析全部完成！輸出圖檔已儲存。")
 
 
 if __name__ == "__main__":

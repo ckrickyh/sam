@@ -16,7 +16,7 @@ uv run python samplingAnalysis/app.py
 
 ## 二、 放棄 SAM 3 蒸餾至 YOLO 分割路線之原因
 
-原規劃將 SAM 3 的分割能力透過偽標籤（Pseudo-labeling）知識遷移至輕量化 YOLO-seg 模型，經實務驗證後決定終止該路線，並將 `ultralystic/`、`simpleSam/` 等相關模組移入 `.trash/` 封存。核心技術原因如下：
+原規劃將 SAM 3 的分割c能力透過偽標籤（Pseudo-labeling）知識遷移至輕量化 YOLO-seg 模型，經實務驗證後決定終止該路線，並將 `ultralystic/`、`simpleSam/` 等相關模組移入 `.trash/` 封存。核心技術原因如下：
 
 1. **神經網路特徵降採樣損失（Resolution Loss）**：
    * YOLO-seg 依賴原型遮罩（Prototype Masks）機制，在較低解析度特徵圖上組合預測。
@@ -33,3 +33,16 @@ uv run python samplingAnalysis/app.py
 轉為採用「宏觀幾何約束 + 微觀物理光學」分工：
 * **宏觀空間約束**：由 SAM 3（Box Prompt）負責鎖定主角樹外包絡（Canopy Envelope），無需管孔隙細節。
 * **微觀無損分析**：在原生解析度下，交由 `CIELAB a* + Otsu 自適應門檻 + OpenCV 拓撲補洞` 演算法分離葉片、木質結構與透光孔隙，達成 100% 物理守恆與無損量化。
+
+
+
+
+---
+## Testing
+uv run samplingAnalysis/adaptive_cielab_otsu_foliage_extractor_fixBranchlet_order_box.py --images data/IMG_20260901_141418.jpg --output-dir samplingAnalysis/output
+
+---
+adaptive_cielab_otsu_foliage_extractor_fixBranchlet_order.py 為原型
+
+adaptive_cielab_otsu_foliage_extractor_fixBranchlet_order_box.py 為連接 gradio (基於adaptive_cielab_otsu_foliage_extractor_fixBranchlet_order.py開發)
+

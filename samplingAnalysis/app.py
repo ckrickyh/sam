@@ -12,7 +12,7 @@ project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from samplingAnalysis.adaptive_cielab_otsu_foliage_extractor_fixBranchlet_order_box import (
+from samplingAnalysis.adaptive_cielab_otsu_foliage_extractor_fixBranchlet_order_box2 import (
     build_sam3_image_model,
     get_optimal_device,
     process_image_cielab_adaptive,
@@ -448,8 +448,8 @@ INDEX_HTML = """
       <!-- 方框坐標與參數設定 -->
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
         <div class="form-group">
-          <label class="form-label">樹冠方框 (xmin ymin xmax ymax)</label>
-          <input type="text" id="canopy_box_input" class="form-input" value="0.02 0.02 0.98 0.90">
+          <label class="form-label">樹冠方框 (選填，未填預設使用 Text Prompt)</label>
+          <input type="text" id="canopy_box_input" class="form-input" value="" placeholder="拖拉設定方框，或留空使用 tree subcanopy">
         </div>
         <div class="form-group">
           <label class="form-label">樹幹方框 (選填，未填使用語意提示)</label>
@@ -606,7 +606,7 @@ INDEX_HTML = """
 
       savedBoxes.canopy = null;
       savedBoxes.trunk = null;
-      document.getElementById('canopy_box_input').value = '0.02 0.02 0.98 0.90';
+      document.getElementById('canopy_box_input').value = '';
       document.getElementById('trunk_box_input').value = '';
 
       renderCanvas();
@@ -728,9 +728,9 @@ INDEX_HTML = """
     function resetBoxes() {
       savedBoxes.canopy = null;
       savedBoxes.trunk = null;
-      document.getElementById('canopy_box_input').value = '0.02 0.02 0.98 0.90';
+      document.getElementById('canopy_box_input').value = '';
       document.getElementById('trunk_box_input').value = '';
-      document.getElementById('status_alert').innerText = '方框已重設為全景預設值。';
+      document.getElementById('status_alert').innerText = '方框已重設（預設使用 Text Prompt: "tree subcanopy"）。';
       renderCanvas();
     }
 
@@ -836,7 +836,7 @@ def serve_output_image(filename: str):
 async def api_analyze(
     file: UploadFile = File(None),
     sample_name: str = Form(None),
-    canopy_box: str = Form("0.02 0.02 0.98 0.90"),
+    canopy_box: str = Form(""),
     trunk_box: str = Form(""),
     confidence_threshold: float = Form(0.25),
     negative_threshold: float = Form(0.155),
