@@ -102,3 +102,11 @@ with gr.Blocks(title="樹冠密度與孔隙分析引擎") as demo:
         outputs=[img_out, metrics_out]
     )
 
+if __name__ == "__main__":
+    import os
+    # 修正 Gradio 內部檢查 localhost 失敗的 bug
+    os.environ["NO_PROXY"] = "localhost,127.0.0.1,::1"
+    
+    # 必須呼叫 launch 才能觸發 ZeroGPU 的代理伺服器
+    demo.launch(server_name="0.0.0.0")
+
