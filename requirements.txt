@@ -16,7 +16,7 @@ seaborn
 setuptools<70
 einops
 pycocotools
-huggingface-hub<0.27.0,>=0.23.0
+huggingface-hub
 
 # Web 服務
 spaces
