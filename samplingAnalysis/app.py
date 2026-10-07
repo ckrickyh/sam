@@ -861,7 +861,10 @@ def serve_output_image(filename: str):
     return JSONResponse(status_code=404, content={"error": "File not found"})
 
 
+import spaces
+
 @app.post("/api/analyze")
+@spaces.GPU
 async def api_analyze(
     file: UploadFile = File(None),
     sample_name: str = Form(None),
