@@ -1,10 +1,11 @@
 ---
-title: Tree Canopy Foliage & Gap Analyzer
-emoji: 🌲
+title: Crown Porosity
+emoji: 🌳
 colorFrom: green
-colorTo: emerald
-sdk: docker
-app_port: 7860
+colorTo: blue
+sdk: gradio
+sdk_version: 5.0.0
+app_file: app.py
 pinned: false
 license: mit
 short_description: SAM 3 Box Prompt & CIELAB a* Foliage & Gap Analyzer
