@@ -4,6 +4,7 @@ torchvision
 numpy<2.0
 scipy
 pandas
+psutil
 
 # 影像處理與視覺庫
 opencv-python-headless
