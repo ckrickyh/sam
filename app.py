@@ -6,6 +6,15 @@ import tempfile
 import gradio as gr
 from huggingface_hub import hf_hub_download
 
+# [Hotfix] 修正 gradio 4.44.1 內部解析 JSON Schema 時對 additionalProperties: False 會噴出 bool is not iterable 的知名 Bug
+import gradio_client.utils as client_utils
+_original_json_schema = client_utils._json_schema_to_python_type
+def _patched_json_schema(schema, defs=None):
+    if isinstance(schema, bool):
+        return "Any"
+    return _original_json_schema(schema, defs)
+client_utils._json_schema_to_python_type = _patched_json_schema
+
 # 將專案根目錄加入路徑
 root_dir = Path(__file__).resolve().parent
 if str(root_dir) not in sys.path:
