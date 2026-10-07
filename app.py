@@ -21,6 +21,10 @@ def create_app():
     # 建立極簡 Gradio Blocks 包裝，隱藏於區域變數避免被 HF auto-launch
     with gr.Blocks(title="樹冠密度與孔隙分析引擎") as blocks:
         gr.Markdown("此為系統 API 與靜態頁面底層")
+        
+        # 必須將 GPU 函式綁定到某個 Gradio 事件上，HF 系統才會真正「偵測」到它
+        btn = gr.Button("Dummy GPU Trigger", visible=False)
+        btn.click(fn=_dummy_gpu_function, inputs=[], outputs=[])
     
     # 將 FastAPI 與 Gradio 結合
     return gr.mount_gradio_app(fastapi_app, blocks, path="/gradio")
