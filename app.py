@@ -4,6 +4,14 @@ from pathlib import Path
 import gradio as gr
 import uvicorn
 
+try:
+    import spaces
+    @spaces.GPU
+    def _dummy_gpu_function():
+        pass
+except ImportError:
+    pass
+
 # 將專案根目錄加入路徑
 root_dir = Path(__file__).resolve().parent
 if str(root_dir) not in sys.path:
