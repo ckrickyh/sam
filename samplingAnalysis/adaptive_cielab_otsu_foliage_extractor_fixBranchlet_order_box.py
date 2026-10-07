@@ -1,5 +1,5 @@
 """自適應 CIELAB a* 樹葉密度與孔隙分析引擎 (主角樹評分排序 + 文字提示與幾何方框版)
-檔案路徑：samplingAnalysis/adaptive_cielab_otsu_foliage_extractor_fixBranchlet_order_box2.py
+檔案路徑：samplingAnalysis/adaptive_cielab_otsu_foliage_extractor_fixBranchlet_order_box.py
 
 核心升級重點：
 1. 語意文字提示與幾何方框提示雙模支援 (Text & Box Prompt Architecture)：
