@@ -14,13 +14,11 @@ seaborn
 # 模型框架與依賴
 einops
 pycocotools
-ultralytics
-huggingface-hub
+huggingface-hub<0.27.0,>=0.23.0
 
 # Web 服務
 fastapi
 uvicorn
-gradio>=5.0.0
 
 # SAM 3
 git+https://github.com/facebookresearch/sam3.git
