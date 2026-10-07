@@ -12,6 +12,7 @@ matplotlib
 seaborn
 
 # 模型框架與依賴
+setuptools<70
 einops
 pycocotools
 huggingface-hub<0.27.0,>=0.23.0
