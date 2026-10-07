@@ -19,16 +19,45 @@ from samplingAnalysis.adaptive_cielab_otsu_foliage_extractor_fixBranchlet_order_
     Sam3Processor,
 )
 
+import os
+from huggingface_hub import hf_hub_download
+
+DEFAULT_CHECKPOINT = "sam3.pt"
+
 # 全域單例快取 SAM 3 模型與處理器
 GLOBAL_PROCESSOR = None
 
 
-def get_processor(checkpoint_path: str = "sam3.pt") -> Sam3Processor:
+def ensure_model_checkpoint(checkpoint_path: str = DEFAULT_CHECKPOINT) -> str:
+    """確認本機是否有模型權重，若無則從 Hugging Face Hub 自動下載"""
+    if os.path.exists(checkpoint_path):
+        return checkpoint_path
+
+    repo_id = os.environ.get("HF_MODEL_REPO")
+    if not repo_id:
+        raise ValueError(
+            f"本地未找到 {checkpoint_path}，且未設定環境變數 HF_MODEL_REPO，無法自動下載權重。"
+        )
+
+    print(f"[*] 本地未偵測到權重 {checkpoint_path}，正在從 Hugging Face ({repo_id}) 下載...")
+    token = os.environ.get("HF_TOKEN_READ") or os.environ.get("HF_TOKEN")
+    downloaded_path = hf_hub_download(
+        repo_id=repo_id,
+        filename=checkpoint_path,
+        local_dir=".",
+        token=token,
+    )
+    print(f"[*] 權重下載完成：{downloaded_path}")
+    return downloaded_path
+
+
+def get_processor(checkpoint_path: str = DEFAULT_CHECKPOINT) -> Sam3Processor:
     global GLOBAL_PROCESSOR
     if GLOBAL_PROCESSOR is None:
+        valid_checkpoint_path = ensure_model_checkpoint(checkpoint_path)
         device = get_optimal_device()
-        print(f"[*] 正在初始化 SAM 3 視覺處理器 ({checkpoint_path}) 於 {device}...")
-        model = build_sam3_image_model(checkpoint_path=checkpoint_path, device=device)
+        print(f"[*] 正在初始化 SAM 3 視覺處理器 ({valid_checkpoint_path}) 於 {device}...")
+        model = build_sam3_image_model(checkpoint_path=valid_checkpoint_path, device=device)
         model = model.to(device).float()
         GLOBAL_PROCESSOR = Sam3Processor(model, device=device)
         print("[*] SAM 3 視覺處理器載入完成。")
