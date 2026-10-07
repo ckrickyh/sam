@@ -6,7 +6,6 @@ colorTo: blue
 sdk: gradio
 sdk_version: 4.44.1
 app_file: app.py
-pinned: false
 license: mit
 short_description: SAM 3 Box Prompt & CIELAB a* Foliage & Gap Analyzer
 ---
