@@ -93,8 +93,8 @@ with gr.Blocks(title="樹冠密度與孔隙分析引擎") as demo:
             btn = gr.Button("開始分析 (ZeroGPU)", variant="primary")
         
         with gr.Column():
-            img_out = gr.Image(type="filepath", label="分析結果四大面板")
-            metrics_out = gr.Code(label="量化指標 (JSON)", language="json")
+            img_out = gr.Image(label="分析結果四大面板")
+            metrics_out = gr.Textbox(label="量化指標 (JSON)", lines=15)
 
     btn.click(
         fn=run_analysis_gradio,
@@ -102,5 +102,3 @@ with gr.Blocks(title="樹冠密度與孔隙分析引擎") as demo:
         outputs=[img_out, metrics_out]
     )
 
-if __name__ == "__main__":
-    demo.launch()
