@@ -12,14 +12,12 @@ if str(root_dir) not in sys.path:
 # 引入現有的 FastAPI app
 from samplingAnalysis.app import app as fastapi_app
 
-# 建立極簡 Gradio Blocks 包裝，確保通過 HF Space 的健康檢查
-with gr.Blocks(title="樹冠密度與孔隙分析引擎") as demo:
-    pass
+def create_app():
+    # 建立極簡 Gradio Blocks 包裝，隱藏於區域變數避免被 HF auto-launch
+    with gr.Blocks(title="樹冠密度與孔隙分析引擎") as blocks:
+        gr.Markdown("此為系統 API 與靜態頁面底層")
+    
+    # 將 FastAPI 與 Gradio 結合
+    return gr.mount_gradio_app(fastapi_app, blocks, path="/gradio")
 
-# 將 FastAPI 與 Gradio 結合
-app = gr.mount_gradio_app(fastapi_app, demo, path="/gradio")
-
-if __name__ == "__main__":
-    # Space 預設讀取 7860 Port
-    port = int(os.environ.get("PORT", 7860))
-    uvicorn.run(fastapi_app, host="0.0.0.0", port=port)
+app = create_app()
