@@ -12,7 +12,7 @@ project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from samplingAnalysis.adaptive_cielab_otsu_foliage_extractor_fixBranchlet_order_box2 import (
+from samplingAnalysis.adaptive_cielab_otsu_foliage_extractor_fixBranchlet_order_box import (
     build_sam3_image_model,
     get_optimal_device,
     process_image_cielab_adaptive,
