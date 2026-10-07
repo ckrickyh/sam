@@ -865,7 +865,7 @@ import spaces
 
 @app.post("/api/analyze")
 @spaces.GPU
-async def api_analyze(
+def api_analyze(
     file: UploadFile = File(None),
     sample_name: str = Form(None),
     canopy_box: str = Form(""),
