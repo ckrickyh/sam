@@ -3,13 +3,10 @@ import sys
 from pathlib import Path
 import gradio as gr
 import uvicorn
+import spaces
 
-try:
-    import spaces
-    @spaces.GPU
-    def _dummy_gpu_function():
-        pass
-except ImportError:
+@spaces.GPU
+def _dummy_gpu_function():
     pass
 
 # 將專案根目錄加入路徑
