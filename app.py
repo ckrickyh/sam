@@ -116,6 +116,21 @@ def get_processor(checkpoint_path: str = DEFAULT_CHECKPOINT) -> Sam3Processor:
                     return orig_roi_align(input, rois, *args, **kwargs)
                 torchvision.ops.roi_align = roi_align_matched
                 
+            # Monkey-patch 6: 攔截 SAM 3 主模型的 Transformer Encoder/Decoder，確保合併後的 prompt 被降轉回 bfloat16
+            if hasattr(GLOBAL_PROCESSOR.model, "_run_encoder"):
+                orig_run_enc = GLOBAL_PROCESSOR.model._run_encoder
+                def run_enc_bf16(backbone_out, prompt, *args, **kwargs):
+                    if isinstance(prompt, torch.Tensor): prompt = prompt.to(torch.bfloat16)
+                    return orig_run_enc(backbone_out, prompt, *args, **kwargs)
+                GLOBAL_PROCESSOR.model._run_encoder = run_enc_bf16
+                
+            if hasattr(GLOBAL_PROCESSOR.model, "_run_decoder"):
+                orig_run_dec = GLOBAL_PROCESSOR.model._run_decoder
+                def run_dec_bf16(backbone_out, encoder_out, prompt, *args, **kwargs):
+                    if isinstance(prompt, torch.Tensor): prompt = prompt.to(torch.bfloat16)
+                    return orig_run_dec(backbone_out, encoder_out, prompt, *args, **kwargs)
+                GLOBAL_PROCESSOR.model._run_decoder = run_dec_bf16
+                
     return GLOBAL_PROCESSOR
 
 def parse_box_str(box_str):
