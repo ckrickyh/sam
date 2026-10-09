@@ -84,11 +84,11 @@ def get_processor(checkpoint_path: str = DEFAULT_CHECKPOINT) -> Sam3Processor:
             # Monkey-patch 3: 強制將 SAM3 自身的 Geometry Encoder 提示轉換為 bfloat16
             if hasattr(GLOBAL_PROCESSOR.model, "geometry_encoder") and GLOBAL_PROCESSOR.model.geometry_encoder:
                 orig_geo_forward = GLOBAL_PROCESSOR.model.geometry_encoder.forward
-                def geo_forward_bf16(points=None, points_labels=None, boxes=None, masks=None, **kwargs):
-                    if points is not None: points = points.to(torch.bfloat16)
-                    if boxes is not None: boxes = boxes.to(torch.bfloat16)
-                    if masks is not None: masks = masks.to(torch.bfloat16)
-                    return orig_geo_forward(points=points, points_labels=points_labels, boxes=boxes, masks=masks, **kwargs)
+                def geo_forward_bf16(geo_prompt, *args, **kwargs):
+                    if geo_prompt.point_embeddings is not None: geo_prompt.point_embeddings = geo_prompt.point_embeddings.to(torch.bfloat16)
+                    if geo_prompt.box_embeddings is not None: geo_prompt.box_embeddings = geo_prompt.box_embeddings.to(torch.bfloat16)
+                    if geo_prompt.mask_embeddings is not None: geo_prompt.mask_embeddings = geo_prompt.mask_embeddings.to(torch.bfloat16)
+                    return orig_geo_forward(geo_prompt, *args, **kwargs)
                 GLOBAL_PROCESSOR.model.geometry_encoder.forward = geo_forward_bf16
     return GLOBAL_PROCESSOR
 
