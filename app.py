@@ -172,6 +172,23 @@ def get_processor(checkpoint_path: str = DEFAULT_CHECKPOINT) -> Sam3Processor:
                         return orig_box_y(*args, **kwargs)
                     decoder.boxRPB_embed_y.forward = box_y_bf16
                     
+                # Monkey-patch 9: 攔截 _update_scores_and_boxes 和 forward_grounding，強制輸入為 bfloat16 (因為 Text Prompt 等特徵可能為 Float32)
+                if hasattr(GLOBAL_PROCESSOR.model, "_update_scores_and_boxes"):
+                    orig_update = GLOBAL_PROCESSOR.model._update_scores_and_boxes
+                    def update_bf16(*args, **kwargs):
+                        args = tuple(a.to(torch.bfloat16) if isinstance(a, torch.Tensor) and a.is_floating_point() else a for a in args)
+                        kwargs = {k: v.to(torch.bfloat16) if isinstance(v, torch.Tensor) and v.is_floating_point() else v for k, v in kwargs.items()}
+                        return orig_update(*args, **kwargs)
+                    GLOBAL_PROCESSOR.model._update_scores_and_boxes = update_bf16
+                    
+                if hasattr(GLOBAL_PROCESSOR.model, "forward_grounding"):
+                    orig_fwd_grounding = GLOBAL_PROCESSOR.model.forward_grounding
+                    def fwd_grounding_bf16(*args, **kwargs):
+                        args = tuple(a.to(torch.bfloat16) if isinstance(a, torch.Tensor) and a.is_floating_point() else a for a in args)
+                        kwargs = {k: v.to(torch.bfloat16) if isinstance(v, torch.Tensor) and v.is_floating_point() else v for k, v in kwargs.items()}
+                        return orig_fwd_grounding(*args, **kwargs)
+                    GLOBAL_PROCESSOR.model.forward_grounding = fwd_grounding_bf16
+                    
     return GLOBAL_PROCESSOR
 
 def parse_box_str(box_str):
