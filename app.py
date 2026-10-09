@@ -68,7 +68,7 @@ def get_processor(checkpoint_path: str = DEFAULT_CHECKPOINT) -> Sam3Processor:
                 return orig_forward(image.to(torch.bfloat16), *args, **kwargs)
             GLOBAL_PROCESSOR.model.backbone.forward_image = forward_image_bf16
             
-            # Monkey-patch 2: 強制將幾何方框/點提示轉換為 bfloat16 避免 PromptEncoder 報錯
+            # Monkey-patch 2: 強制將 SAM1 幾何方框/點提示轉換為 bfloat16 避免 PromptEncoder 報錯
             if hasattr(GLOBAL_PROCESSOR.model, "inst_interactive_predictor") and GLOBAL_PROCESSOR.model.inst_interactive_predictor:
                 orig_prompt = GLOBAL_PROCESSOR.model.inst_interactive_predictor.model.sam_prompt_encoder.forward
                 def prompt_bf16(points, boxes, masks, *args, **kwargs):
@@ -80,6 +80,16 @@ def get_processor(checkpoint_path: str = DEFAULT_CHECKPOINT) -> Sam3Processor:
                         masks = masks.to(torch.bfloat16)
                     return orig_prompt(points, boxes, masks, *args, **kwargs)
                 GLOBAL_PROCESSOR.model.inst_interactive_predictor.model.sam_prompt_encoder.forward = prompt_bf16
+                
+            # Monkey-patch 3: 強制將 SAM3 自身的 Geometry Encoder 提示轉換為 bfloat16
+            if hasattr(GLOBAL_PROCESSOR.model, "geometry_encoder") and GLOBAL_PROCESSOR.model.geometry_encoder:
+                orig_geo_forward = GLOBAL_PROCESSOR.model.geometry_encoder.forward
+                def geo_forward_bf16(points=None, points_labels=None, boxes=None, masks=None, **kwargs):
+                    if points is not None: points = points.to(torch.bfloat16)
+                    if boxes is not None: boxes = boxes.to(torch.bfloat16)
+                    if masks is not None: masks = masks.to(torch.bfloat16)
+                    return orig_geo_forward(points=points, points_labels=points_labels, boxes=boxes, masks=masks, **kwargs)
+                GLOBAL_PROCESSOR.model.geometry_encoder.forward = geo_forward_bf16
     return GLOBAL_PROCESSOR
 
 def parse_box_str(box_str):
