@@ -54,9 +54,6 @@ def get_processor(checkpoint_path: str = DEFAULT_CHECKPOINT) -> Sam3Processor:
         device = get_optimal_device()
         print(f"正在初始化 SAM 3 模型，運算裝置: {device}...")
         model = build_sam3_image_model(checkpoint_path=valid_checkpoint_path, device=device)
-        if device == "cuda":
-            import torch
-            model = model.to(torch.bfloat16)
         GLOBAL_PROCESSOR = Sam3Processor(model, device=device)
     return GLOBAL_PROCESSOR
 
@@ -84,17 +81,19 @@ def run_analysis_gradio(img_filepath, canopy_box_str, trunk_box_str, conf_thresh
         out_dir = root_dir / "samplingAnalysis" / "output"
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        metrics = process_image_cielab_adaptive(
-            image_path=img_filepath,
-            processor=processor,
-            canopy_box=canopy_parsed,
-            trunk_box=trunk_parsed,
-            confidence_threshold=conf_thresh,
-            negative_threshold=neg_thresh,
-            max_gap_ratio=max_gap_ratio,
-            exg_threshold=exg_thresh,
-            output_dir=out_dir,
-        )
+        import torch
+        with torch.autocast(device_type="cuda", enabled=False):
+            metrics = process_image_cielab_adaptive(
+                image_path=img_filepath,
+                processor=processor,
+                canopy_box=canopy_parsed,
+                trunk_box=trunk_parsed,
+                confidence_threshold=conf_thresh,
+                negative_threshold=neg_thresh,
+                max_gap_ratio=max_gap_ratio,
+                exg_threshold=exg_thresh,
+                output_dir=out_dir,
+            )
 
         stem = Path(img_filepath).stem
         result_img_path = out_dir / f"{stem}_cielab_otsu_render.png"
