@@ -153,6 +153,12 @@ def get_processor(checkpoint_path: str = DEFAULT_CHECKPOINT) -> Sam3Processor:
                         return orig_ref_head(x.to(torch.bfloat16), *args, **kwargs)
                     decoder.ref_point_head.forward = ref_head_bf16
                     
+                # Monkey-patch 8: 將 boxRPB_embed_x 和 boxRPB_embed_y 轉換為 bfloat16 (因為 .to(bfloat16) 可能遺漏了這些自訂模組或延遲初始化的層)
+                if hasattr(decoder, "boxRPB_embed_x") and decoder.boxRPB_embed_x is not None:
+                    decoder.boxRPB_embed_x.to(torch.bfloat16)
+                if hasattr(decoder, "boxRPB_embed_y") and decoder.boxRPB_embed_y is not None:
+                    decoder.boxRPB_embed_y.to(torch.bfloat16)
+                    
     return GLOBAL_PROCESSOR
 
 def parse_box_str(box_str):
