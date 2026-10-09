@@ -42,7 +42,7 @@ def get_optimal_device() -> str:
     return "cpu"
 
 
-def extract_green_vegetation_mask(image_np: np.ndarray) -> np.ndarray:
+def extract_green_vegetation_mask(image_np: np.ndarray, exg_threshold: float = 0.015) -> np.ndarray:
     """計算超綠指數 (ExG) 與 HSV 綠色區間，產出綠色植物保護遮罩"""
     r = image_np[:, :, 0].astype(float)
     g = image_np[:, :, 1].astype(float)
@@ -55,7 +55,7 @@ def extract_green_vegetation_mask(image_np: np.ndarray) -> np.ndarray:
     s_chan = hsv[:, :, 1]
 
     is_hsv_green = (h_chan >= 25) & (h_chan <= 95) & (s_chan >= 15)
-    is_exg_green = norm_exg > 0.015
+    is_exg_green = norm_exg > exg_threshold
 
     return is_hsv_green | is_exg_green
 
@@ -67,6 +67,47 @@ def compute_canopy_envelope(binary_mask: np.ndarray, radius_px: int = 35) -> np.
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (radius_px, radius_px))
     closed = cv2.morphologyEx(binary_mask.astype(np.uint8), cv2.MORPH_CLOSE, kernel)
     return closed.astype(bool)
+
+
+def isolate_macro_sky_voids(
+    canopy_envelope: np.ndarray,
+    raw_gaps_mask: np.ndarray,
+    max_gap_ratio: float = 0.05,
+    min_pixels_floor: int = 500,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """隔離樹冠內大範圍天空缺口，修正過度包絡並純化微觀透光孔隙 (預設門檻: 0.05，即 5.0%)"""
+    effective_ratio = (max_gap_ratio / 100.0) if max_gap_ratio > 1.0 else max_gap_ratio
+
+    if effective_ratio <= 0.0 or np.sum(raw_gaps_mask) == 0:
+        return canopy_envelope, raw_gaps_mask, np.zeros_like(raw_gaps_mask, dtype=bool)
+
+    total_env_px = int(np.sum(canopy_envelope))
+    if total_env_px == 0:
+        return canopy_envelope, raw_gaps_mask, np.zeros_like(raw_gaps_mask, dtype=bool)
+
+    # 1. 計算面積門檻 (0.01 代表包絡面積的 1.0%)
+    area_cutoff = max(int(total_env_px * effective_ratio), min_pixels_floor)
+
+    # 2. 形態學橋接：消除細小枝條將大天空切割為碎片多邊形的干擾
+    h, w = canopy_envelope.shape[:2]
+    bridge_radius = max(int(min(w, h) * 0.015), 5)
+    kernel_bridge = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (bridge_radius, bridge_radius))
+    bridged_gaps = cv2.morphologyEx(raw_gaps_mask.astype(np.uint8), cv2.MORPH_CLOSE, kernel_bridge)
+
+    # 3. 凝聚後之連通元件分析
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(bridged_gaps, connectivity=8)
+    macro_sky_region = np.zeros_like(raw_gaps_mask, dtype=bool)
+
+    for lbl in range(1, num_labels):
+        area = stats[lbl, cv2.CC_STAT_AREA]
+        if area >= area_cutoff:
+            macro_sky_region |= (labels == lbl)
+
+    # 4. 隔離大範圍穿透天空，純化微觀孔隙與包絡分母
+    macro_sky_mask = raw_gaps_mask & macro_sky_region
+    micro_gaps_mask = raw_gaps_mask & (~macro_sky_mask)
+    pruned_envelope = canopy_envelope & (~macro_sky_mask)
+    return pruned_envelope, micro_gaps_mask, macro_sky_mask
 
 
 def filter_hierarchical_super_masks(
@@ -119,6 +160,7 @@ def calculate_focus_primary_scores(
     boxes: list[np.ndarray],
     scores: list[float],
     image_shape: tuple[int, int],
+    envelope_ratio: float = 0.03,
     weight_envelope: float = 0.25,
     weight_center: float = 0.45,
     weight_anchor: float = 0.20,
@@ -132,7 +174,8 @@ def calculate_focus_primary_scores(
     sigma_x = w * 0.25
     sigma_y = h * 0.35
 
-    envelope_list = [compute_canopy_envelope(m, radius_px=int(min(w, h) * 0.03)) for m in masks]
+    env_radius = max(int(min(w, h) * envelope_ratio), 3)
+    envelope_list = [compute_canopy_envelope(m, radius_px=env_radius) for m in masks]
     envelope_areas = [int(np.sum(env)) for env in envelope_list]
     max_envelope_area = max(envelope_areas) if len(envelope_areas) > 0 and max(envelope_areas) > 0 else 1
 
@@ -191,13 +234,15 @@ def heal_and_refine_wood_trunk(
     raw_trunk_mask: np.ndarray,
     img_bgr: np.ndarray,
     canopy_envelope: np.ndarray,
+    green_mask: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """利用 OpenCV 形態學修復 SAM 3 樹幹破洞，並提取外圍逆光細枝 (樹幹絕對鎖定版)"""
+    """利用 OpenCV 形態學修復 SAM 3 樹幹破洞，並提取外圍逆光細枝 (融合 ExG 綠葉絕對防護)"""
     h, w = raw_trunk_mask.shape[:2]
+    green_barrier = green_mask if green_mask is not None else np.zeros((h, w), dtype=bool)
 
-    # 1. 消除 SAM 3 樹幹內部小於 3000px 的採樣黑洞
-    trunk_inv = (~raw_trunk_mask).astype(np.uint8)
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(trunk_inv, connectivity=8)
+    # 1. 消除 SAM 3 樹幹內部小於 3000px 的採樣黑洞 (嚴格限制於非 ExG 綠葉區域，防止塗滿夾縫樹葉)
+    trunk_inv = (~raw_trunk_mask) & (~green_barrier)
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(trunk_inv.astype(np.uint8), connectivity=8)
 
     filled_trunk = raw_trunk_mask.copy()
     for label_idx in range(1, num_labels):
@@ -205,18 +250,18 @@ def heal_and_refine_wood_trunk(
         if area < 3000:
             filled_trunk |= (labels == label_idx)
 
-    # 2. 形態學平滑閉運算
+    # 2. 形態學平滑閉運算 (再次減去 ExG 綠葉，防止邊緣膨脹溢出侵蝕相鄰樹葉)
     kernel_heal = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
     smooth_trunk = cv2.morphologyEx(filled_trunk.astype(np.uint8), cv2.MORPH_CLOSE, kernel_heal).astype(bool)
-    smooth_trunk = smooth_trunk & canopy_envelope
+    smooth_trunk = smooth_trunk & (~green_barrier) & canopy_envelope
 
-    # 3. 提取外圍微觀逆光細枝 (僅在外圍非 SAM 3 主幹區域尋找: L* < 95 且 a* >= 126)
+    # 3. 提取外圍微觀逆光細枝 (僅在非綠葉區域尋找: L* < 95 且 a* >= 126)
     lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
     l_chan, a_chan, _ = cv2.split(lab)
-    fine_branches = (l_chan < 95) & (a_chan >= 126) & canopy_envelope & (~smooth_trunk)
+    fine_branches = (l_chan < 95) & (a_chan >= 126) & canopy_envelope & (~smooth_trunk) & (~green_barrier)
 
-    # 總木質部 = SAM 3 樹幹主骨架 (絕對不可變綠) + 外圍逆光細枝
-    total_wood = smooth_trunk | fine_branches
+    # 總木質部 = SAM 3 樹幹主骨架 + 外圍逆光細枝 (全數剔除綠葉)
+    total_wood = (smooth_trunk | fine_branches) & (~green_barrier)
     return smooth_trunk, total_wood
 
 
@@ -227,6 +272,9 @@ def process_image_cielab_adaptive(
     negative_prompt: str = "tree trunk, tree branch",
     confidence_threshold: float = 0.25,
     negative_threshold: float = 0.155,
+    envelope_ratio: float = 0.03,
+    max_gap_ratio: float = 0.01,
+    exg_threshold: float = 0.015,
     output_dir: Path | None = None,
     artifact_dir: Path | None = None,
 ) -> dict:
@@ -255,8 +303,8 @@ def process_image_cielab_adaptive(
         print(f"[Warning] {img_path.name} 未偵測到樹冠遮罩。")
         return {"stem": stem, "status": "No Detections"}
 
-    # 綠色植物保護遮罩
-    green_mask = extract_green_vegetation_mask(img_rgb)
+    # 綠色植物保護遮罩 (融合 ExG 超綠指數與 HSV 綠色)
+    green_mask = extract_green_vegetation_mask(img_rgb, exg_threshold=exg_threshold)
 
     # 2. SAM 3 語意木質樹幹推論 (處理非啡色樹皮)
     processor.set_confidence_threshold(negative_threshold)
@@ -313,6 +361,7 @@ def process_image_cielab_adaptive(
         boxes=filtered_boxes,
         scores=filtered_scores,
         image_shape=(h, w),
+        envelope_ratio=envelope_ratio,
     )
     candidate_metrics.sort(key=lambda x: x["composite_score"], reverse=True)
 
@@ -343,7 +392,8 @@ def process_image_cielab_adaptive(
         nearby_mask |= filtered_masks[cand["index"]]
 
     # 6. 計算主角樹的外包絡 (Envelope 分母基準)
-    primary_envelope = compute_canopy_envelope(primary_mask, radius_px=int(min(w, h) * 0.03))
+    primary_envelope_radius = max(int(min(w, h) * envelope_ratio), 3)
+    primary_envelope = compute_canopy_envelope(primary_mask, radius_px=primary_envelope_radius)
     # 嚴格排除周邊樹穿透干擾
     canopy_envelope = primary_envelope & (~nearby_mask)
     if np.sum(canopy_envelope) == 0:
@@ -378,11 +428,12 @@ def process_image_cielab_adaptive(
         method_used = "Default Line (128.0)"
         leaf_chroma_mask = primary_mask & canopy_envelope
 
-    # 8. 融合 SAM 3 語意樹幹 + OpenCV 形態學修復
+    # 8. 融合 SAM 3 語意樹幹 + OpenCV 形態學修復 (帶入 ExG 綠葉阻隔壁壘)
     smooth_trunk, total_wood_mask = heal_and_refine_wood_trunk(
         raw_trunk_mask=trunk_mask,
         img_bgr=img_bgr,
         canopy_envelope=canopy_envelope,
+        green_mask=green_mask,
     )
 
     # 樹冠暗部非天空判定 (自然光學鐵律：白天仰拍時，透光天空必定高亮，暗部絕不可能是穿透天空)
@@ -395,7 +446,7 @@ def process_image_cielab_adaptive(
 
     # 2. 暗部枝幹救援：木質部色相必須為暖啡色 (H <= 22)、紅褐色 (H >= 170) 或低飽和度灰黑樹皮 (S < 25 且 a* >= 126)，且不與綠葉衝突
     is_warm_wood_hue = (h_chan <= 22) | (h_chan >= 170) | ((s_chan < 25) & (a_chan >= 126))
-    dark_wood_rescue = is_dark_canopy & (l_chan < 145) & is_warm_wood_hue & (a_chan >= 126) & (~dark_foliage_rescue)
+    dark_wood_rescue = is_dark_canopy & (l_chan < 145) & is_warm_wood_hue & (a_chan >= 126) & (~dark_foliage_rescue) & (~green_mask)
 
     # 3. 逆光耀光高光葉片補償 (Backlight Foliage Compensation)：
     # 排除純白天光過曝區 (L* > 235 且 S < 18)
@@ -406,21 +457,29 @@ def process_image_cielab_adaptive(
     flare_green_leaf = (g_chan > r_chan + 4) & (~is_pure_white_sky)
     backlight_leaf_mask = ((a_chan < 128) | flare_green_leaf) & (~is_pure_white_sky) & canopy_envelope
 
-    # 鮮綠植物保護盾：強綠色像素 (ExG / HSV 綠且 a* < 126) 具備豁免權，防止被木質部誤殺
-    strong_green_shield = green_mask & (a_chan < 126)
+    # 鮮綠植物保護盾：符合 ExG/HSV 綠色且 a* < 128 (符合 CIE 綠色界線) 具備絕對豁免權
+    strong_green_shield = green_mask & (a_chan < 128)
     effective_trunk = (smooth_trunk | dark_wood_rescue) & (~strong_green_shield)
 
     pure_foliage_mask = (leaf_chroma_mask | strong_green_shield | dark_foliage_rescue | backlight_leaf_mask) & (~effective_trunk) & canopy_envelope
 
-    # 總木質部包含經保護盾校驗之有效樹幹，以及外圍不與純綠葉衝突的細枝
-    total_wood_mask = (effective_trunk | (total_wood_mask & (~pure_foliage_mask))) & canopy_envelope
-    internal_gaps_mask = canopy_envelope & (~pure_foliage_mask) & (~total_wood_mask)
+    # 總木質部：嚴格扣除純葉片與 ExG 綠葉保護盾，徹底杜絕樹葉被誤判為啡色木質
+    total_wood_mask = ((effective_trunk | total_wood_mask) & (~pure_foliage_mask) & (~strong_green_shield)) & canopy_envelope
 
-    # 9. 量化統計
+    # 隔離內部大範圍天空 (若單一孔洞佔比超過 max_gap_ratio)
+    raw_gaps_mask = canopy_envelope & (~pure_foliage_mask) & (~total_wood_mask)
+    canopy_envelope, internal_gaps_mask, macro_sky_mask = isolate_macro_sky_voids(
+        canopy_envelope=canopy_envelope,
+        raw_gaps_mask=raw_gaps_mask,
+        max_gap_ratio=max_gap_ratio,
+    )
+
+    # 9. 量化統計 (依校正後的外包絡與孔隙為準)
     envelope_px = int(np.sum(canopy_envelope))
     foliage_px = int(np.sum(pure_foliage_mask))
     wood_px = int(np.sum(total_wood_mask))
     gaps_px = int(np.sum(internal_gaps_mask))
+    macro_sky_px = int(np.sum(macro_sky_mask))
 
     canopy_density_pct = (foliage_px / envelope_px * 100.0) if envelope_px > 0 else 0.0
     canopy_porosity_pct = (gaps_px / envelope_px * 100.0) if envelope_px > 0 else 0.0
@@ -434,11 +493,13 @@ def process_image_cielab_adaptive(
     print(f"★ 候選樹木總數: {len(filtered_masks)} 株 (主角樹 1 株，周邊樹 {len(nearby_candidates)} 株)")
     print(f"★ 主角樹評分 (Composite Score): {primary_info['composite_score']:.3f}")
     print(f"  └ 居中度分: {primary_info['center_score']:.3f} | 包絡面積分: {primary_info['envelope_score']:.3f} | 地基錨點: {primary_info['has_anchor']}")
-    print(f"★ 主角樹外包絡 (Envelope): {envelope_px:,} px")
+    print(f"★ 主角樹校正外包絡 (Envelope): {envelope_px:,} px")
     print(f"★ 判定機制與門檻: {method_used}")
     print(f"★ 純樹葉面積 (Living Foliage): {foliage_px:,} px")
     print(f"★ 木質樹幹枝幹 (Wood Trunk + Branches): {wood_px:,} px -> 【佔比: {wood_ratio_pct:.2f}%】")
     print(f"★ 內部透光孔隙 (Canopy Gaps): {gaps_px:,} px")
+    if macro_sky_px > 0:
+        print(f"★ 隔離大範圍天空 (Macro Sky Voids): {macro_sky_px:,} px (門檻: {max_gap_ratio*100:.1f}%)")
     print("----------------------------------------------------------------------")
     print(f"【標準冠層指標 (分母 Envelope)】: 葉密度 {canopy_density_pct:.2f}% | 孔隙率 {canopy_porosity_pct:.2f}%")
     print(f"【淨葉覆蓋指標 (分母 Envelope - Wood)】: 葉覆蓋 {foliage_cover_pct:.2f}% | 淨孔隙 {net_porosity_pct:.2f}%")
@@ -521,6 +582,7 @@ def process_image_cielab_adaptive(
         "foliage_pixels": foliage_px,
         "wood_pixels": wood_px,
         "gaps_pixels": gaps_px,
+        "macro_sky_pixels": macro_sky_px,
         "canopy_density_pct": canopy_density_pct,
         "foliage_cover_pct": foliage_cover_pct,
         "canopy_porosity_pct": canopy_porosity_pct,
@@ -539,6 +601,14 @@ def main():
     parser.add_argument("--device", type=str, default=None, help="運算裝置 (cuda/cpu，預設自動偵測)")
     parser.add_argument("--output-dir", type=str, default="samplingAnalysis/output", help="輸出圖檔目錄")
     parser.add_argument("--artifact-dir", type=str, default=None, help="Artifact 輸出目錄")
+    parser.add_argument("--envelope-ratio", type=float, default=0.03, help="樹冠空間包絡半徑比例 (預設: 0.03)")
+    parser.add_argument(
+        "--max-gap-ratio",
+        type=float,
+        default=0.01,
+        help="樹冠內部大範圍天空隔離門檻 (預設: 0.01；備註：數值愈大，Gap值愈低。代表天空過濾強度/容許上限，數值設為 0 則不進行天空隔離)",
+    )
+    parser.add_argument("--exg-threshold", type=float, default=0.015, help="超綠指數 (ExG) 植被門檻值 (預設: 0.015)")
     parser.add_argument("--csv-name", type=str, default="cielab_otsu_summary.csv", help="量化結果 CSV 檔名")
     args = parser.parse_args()
 
@@ -581,6 +651,9 @@ def main():
             res = process_image_cielab_adaptive(
                 image_path=img_p,
                 processor=processor,
+                envelope_ratio=args.envelope_ratio,
+                max_gap_ratio=args.max_gap_ratio,
+                exg_threshold=args.exg_threshold,
                 output_dir=out_dir,
                 artifact_dir=art_dir,
             )

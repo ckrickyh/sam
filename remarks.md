@@ -46,3 +46,16 @@ adaptive_cielab_otsu_foliage_extractor_fixBranchlet_order.py 為原型
 
 adaptive_cielab_otsu_foliage_extractor_fixBranchlet_order_box.py 為連接 gradio (基於adaptive_cielab_otsu_foliage_extractor_fixBranchlet_order.py開發)
 
+---
+Scratch folder for study only
+
+---
+gpu ram 125gb
+qwen 3.6 125b para 128gb
+deepseek 70b para 128gb
+
+50萬 （10萬裝機）
+
+---
+vendor 
+香港 深圳

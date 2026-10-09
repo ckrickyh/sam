@@ -12,7 +12,7 @@ project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from samplingAnalysis.adaptive_cielab_otsu_foliage_extractor_fixBranchlet_order_box import (
+from samplingAnalysis.adaptive_cielab_otsu_foliage_extractor_fixBranchlet_order_maxGapRatio_ExG_box import (
     build_sam3_image_model,
     get_optimal_device,
     process_image_cielab_adaptive,
@@ -502,6 +502,22 @@ INDEX_HTML = """
         </div>
       </div>
 
+      <!-- ExG 與天空隔離參數 -->
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px;">
+        <div class="form-group">
+          <label class="form-label">天空隔離門檻 (Max Gap)：<span id="gap_val">0.05</span></label>
+          <div class="slider-row">
+            <input type="range" id="slider_gap" min="0.0" max="1.0" step="0.001" value="0.05" oninput="document.getElementById('gap_val').innerText = this.value">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">綠葉保護門檻 (ExG)：<span id="exg_val">0.015</span></label>
+          <div class="slider-row">
+            <input type="range" id="slider_exg" min="0.0" max="0.05" step="0.001" value="0.015" oninput="document.getElementById('exg_val').innerText = this.value">
+          </div>
+        </div>
+      </div>
+
       <!-- 按鈕 -->
       <div class="btn-action-row">
         <button class="btn-secondary" onclick="resetBoxes()">重設方框</button>
@@ -556,6 +572,7 @@ INDEX_HTML = """
           <tr><td>純葉片像素 (Living Foliage)</td><td id="val_foliage_pixels">-- px</td></tr>
           <tr><td>木質結構像素 (Wood Structure)</td><td id="val_wood_pixels">-- px</td></tr>
           <tr><td>內部穿透孔隙 (Canopy Gaps)</td><td id="val_gaps_pixels">-- px</td></tr>
+          <tr><td>大範圍天空隔離 (Macro Sky)</td><td id="val_macro_sky_pixels">-- px</td></tr>
           <tr><td>樹冠外包絡面積 (Canopy Envelope)</td><td id="val_envelope_pixels">-- px</td></tr>
           <tr><td>色度判定機制 (Method Used)</td><td id="val_method_used">--</td></tr>
         </tbody>
@@ -786,6 +803,8 @@ INDEX_HTML = """
       formData.append('trunk_box', document.getElementById('trunk_box_input').value);
       formData.append('confidence_threshold', document.getElementById('slider_conf').value);
       formData.append('negative_threshold', document.getElementById('slider_neg').value);
+      formData.append('max_gap_ratio', document.getElementById('slider_gap').value);
+      formData.append('exg_threshold', document.getElementById('slider_exg').value);
 
       try {
         const resp = await fetch('/api/analyze', {
@@ -819,6 +838,11 @@ INDEX_HTML = """
         document.getElementById('val_foliage_pixels').innerText = m.foliage_pixels.toLocaleString() + ' px';
         document.getElementById('val_wood_pixels').innerText = m.wood_pixels.toLocaleString() + ' px';
         document.getElementById('val_gaps_pixels').innerText = m.gaps_pixels.toLocaleString() + ' px';
+        if (m.macro_sky_pixels !== undefined) {
+          document.getElementById('val_macro_sky_pixels').innerText = m.macro_sky_pixels.toLocaleString() + ' px';
+        } else {
+          document.getElementById('val_macro_sky_pixels').innerText = '0 px';
+        }
         document.getElementById('val_envelope_pixels').innerText = m.envelope_pixels.toLocaleString() + ' px';
         document.getElementById('val_method_used').innerText = m.method_used;
 
@@ -861,7 +885,14 @@ def serve_output_image(filename: str):
     return JSONResponse(status_code=404, content={"error": "File not found"})
 
 
-import spaces
+try:
+    import spaces
+except ImportError:
+    # 建立本機執行時的替代裝飾器
+    class spaces:
+        @staticmethod
+        def GPU(func):
+            return func
 
 @app.post("/api/analyze")
 @spaces.GPU
@@ -872,6 +903,8 @@ def api_analyze(
     trunk_box: str = Form(""),
     confidence_threshold: float = Form(0.25),
     negative_threshold: float = Form(0.155),
+    max_gap_ratio: float = Form(0.01),
+    exg_threshold: float = Form(0.015),
 ):
     temp_img_path = None
     try:
@@ -905,6 +938,8 @@ def api_analyze(
             trunk_box=trunk_parsed,
             confidence_threshold=confidence_threshold,
             negative_threshold=negative_threshold,
+            max_gap_ratio=max_gap_ratio,
+            exg_threshold=exg_threshold,
             output_dir=out_dir,
         )
 
