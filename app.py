@@ -121,9 +121,13 @@ def get_processor(checkpoint_path: str = DEFAULT_CHECKPOINT) -> Sam3Processor:
                 if isinstance(obj, torch.Tensor) and obj.is_floating_point():
                     return obj.to(torch.bfloat16)
                 elif isinstance(obj, dict):
-                    return {k: deep_cast_bf16(v) for k, v in obj.items()}
+                    for k, v in obj.items():
+                        obj[k] = deep_cast_bf16(v)
+                    return obj
                 elif isinstance(obj, list):
-                    return [deep_cast_bf16(v) for v in obj]
+                    for i in range(len(obj)):
+                        obj[i] = deep_cast_bf16(obj[i])
+                    return obj
                 elif isinstance(obj, tuple) and hasattr(obj, '_fields'):  # namedtuple
                     return type(obj)(*(deep_cast_bf16(v) for v in obj))
                 elif isinstance(obj, tuple):
