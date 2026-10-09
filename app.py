@@ -54,7 +54,32 @@ def get_processor(checkpoint_path: str = DEFAULT_CHECKPOINT) -> Sam3Processor:
         device = get_optimal_device()
         print(f"正在初始化 SAM 3 模型，運算裝置: {device}...")
         model = build_sam3_image_model(checkpoint_path=valid_checkpoint_path, device=device)
+        if device == "cuda":
+            import torch
+            model = model.to(torch.bfloat16)
+        
         GLOBAL_PROCESSOR = Sam3Processor(model, device=device)
+        
+        if device == "cuda":
+            import torch
+            # Monkey-patch 1: 強制將輸入影像轉換為 bfloat16 避免 Conv2d 報錯
+            orig_forward = GLOBAL_PROCESSOR.model.backbone.forward_image
+            def forward_image_bf16(image, *args, **kwargs):
+                return orig_forward(image.to(torch.bfloat16), *args, **kwargs)
+            GLOBAL_PROCESSOR.model.backbone.forward_image = forward_image_bf16
+            
+            # Monkey-patch 2: 強制將幾何方框/點提示轉換為 bfloat16 避免 PromptEncoder 報錯
+            if hasattr(GLOBAL_PROCESSOR.model, "inst_interactive_predictor") and GLOBAL_PROCESSOR.model.inst_interactive_predictor:
+                orig_prompt = GLOBAL_PROCESSOR.model.inst_interactive_predictor.model.sam_prompt_encoder.forward
+                def prompt_bf16(points, boxes, masks, *args, **kwargs):
+                    if points is not None:
+                        points = (points[0].to(torch.bfloat16), points[1])
+                    if boxes is not None:
+                        boxes = boxes.to(torch.bfloat16)
+                    if masks is not None:
+                        masks = masks.to(torch.bfloat16)
+                    return orig_prompt(points, boxes, masks, *args, **kwargs)
+                GLOBAL_PROCESSOR.model.inst_interactive_predictor.model.sam_prompt_encoder.forward = prompt_bf16
     return GLOBAL_PROCESSOR
 
 def parse_box_str(box_str):
@@ -81,19 +106,17 @@ def run_analysis_gradio(img_filepath, canopy_box_str, trunk_box_str, conf_thresh
         out_dir = root_dir / "samplingAnalysis" / "output"
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        import torch
-        with torch.autocast(device_type="cuda", enabled=False):
-            metrics = process_image_cielab_adaptive(
-                image_path=img_filepath,
-                processor=processor,
-                canopy_box=canopy_parsed,
-                trunk_box=trunk_parsed,
-                confidence_threshold=conf_thresh,
-                negative_threshold=neg_thresh,
-                max_gap_ratio=max_gap_ratio,
-                exg_threshold=exg_thresh,
-                output_dir=out_dir,
-            )
+        metrics = process_image_cielab_adaptive(
+            image_path=img_filepath,
+            processor=processor,
+            canopy_box=canopy_parsed,
+            trunk_box=trunk_parsed,
+            confidence_threshold=conf_thresh,
+            negative_threshold=neg_thresh,
+            max_gap_ratio=max_gap_ratio,
+            exg_threshold=exg_thresh,
+            output_dir=out_dir,
+        )
 
         stem = Path(img_filepath).stem
         result_img_path = out_dir / f"{stem}_cielab_otsu_render.png"
@@ -107,24 +130,23 @@ def run_analysis_gradio(img_filepath, canopy_box_str, trunk_box_str, conf_thresh
         print(err_detail)
         return None, err_detail
 
-with gr.Blocks(title="樹冠密度與孔隙分析引擎") as demo:
-    gr.Markdown("# 🌳 樹冠密度與孔隙分析引擎 (純 Gradio + ZeroGPU)")
-    gr.Markdown("此版本完全拋棄 FastAPI 框架，改用 Gradio 直接銜接分析引擎核心，以保證與 Hugging Face ZeroGPU 的 100% 相容性。")
+with gr.Blocks(title="Crown Porosity") as demo:
+    gr.Markdown("# 🌳 Crown Porosity")
     
     with gr.Row():
         with gr.Column():
             img_in = gr.Image(type="filepath", label="上傳樹木圖片")
             canopy_box = gr.Textbox(label="樹冠邊界框 (Canopy Box)", placeholder="例如: 100, 100, 500, 500 (可留空)")
             trunk_box = gr.Textbox(label="樹幹邊界框 (Trunk Box)", placeholder="例如: 200, 400, 300, 600 (可留空)")
-            conf_thresh = gr.Slider(0.0, 1.0, value=0.25, label="SAM 3 信心門檻")
+            conf_thresh = gr.Slider(0.0, 1.0, value=0.25, label="SAM 3 Threshold")
             neg_thresh = gr.Slider(0.0, 1.0, value=0.155, label="Negative Threshold")
-            max_gap_ratio_slider = gr.Slider(0.0, 1.0, value=0.05, label="天空隔離門檻 (Max Gap Ratio)")
-            exg_thresh_slider = gr.Slider(0.0, 0.05, step=0.001, value=0.015, label="綠葉保護門檻 (ExG Threshold)")
-            btn = gr.Button("開始分析 (ZeroGPU)", variant="primary")
+            max_gap_ratio_slider = gr.Slider(0.0, 1.0, value=0.05, label="Max Gap Ratio inside Crown")
+            exg_thresh_slider = gr.Slider(0.0, 0.05, step=0.001, value=0.015, label="Green Leaf ExG Threshold")
+            btn = gr.Button("Start Analysis (ZeroGPU)", variant="primary")
         
         with gr.Column():
-            img_out = gr.Image(label="分析結果四大面板")
-            metrics_out = gr.Textbox(label="量化指標 (JSON)", lines=15)
+            img_out = gr.Image(label="Analysis Results 4 Panels")
+            metrics_out = gr.Textbox(label="Quantitative indicators (JSON)", lines=15)
 
     btn.click(
         fn=run_analysis_gradio,
