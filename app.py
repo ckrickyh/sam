@@ -90,6 +90,19 @@ def get_processor(checkpoint_path: str = DEFAULT_CHECKPOINT) -> Sam3Processor:
                     if geo_prompt.mask_embeddings is not None: geo_prompt.mask_embeddings = geo_prompt.mask_embeddings.to(torch.bfloat16)
                     return orig_geo_forward(geo_prompt, *args, **kwargs)
                 GLOBAL_PROCESSOR.model.geometry_encoder.forward = geo_forward_bf16
+                
+                # Monkey-patch 4: 強制將內部 Float32 的位置編碼轉回 bfloat16 避免後續 Linear 報錯
+                if hasattr(GLOBAL_PROCESSOR.model.geometry_encoder, "points_pos_enc_project") and GLOBAL_PROCESSOR.model.geometry_encoder.points_pos_enc_project:
+                    orig_pts_proj = GLOBAL_PROCESSOR.model.geometry_encoder.points_pos_enc_project.forward
+                    def pts_proj_bf16(x, *args, **kwargs):
+                        return orig_pts_proj(x.to(torch.bfloat16), *args, **kwargs)
+                    GLOBAL_PROCESSOR.model.geometry_encoder.points_pos_enc_project.forward = pts_proj_bf16
+                    
+                if hasattr(GLOBAL_PROCESSOR.model.geometry_encoder, "boxes_pos_enc_project") and GLOBAL_PROCESSOR.model.geometry_encoder.boxes_pos_enc_project:
+                    orig_box_proj = GLOBAL_PROCESSOR.model.geometry_encoder.boxes_pos_enc_project.forward
+                    def box_proj_bf16(x, *args, **kwargs):
+                        return orig_box_proj(x.to(torch.bfloat16), *args, **kwargs)
+                    GLOBAL_PROCESSOR.model.geometry_encoder.boxes_pos_enc_project.forward = box_proj_bf16
     return GLOBAL_PROCESSOR
 
 def parse_box_str(box_str):
