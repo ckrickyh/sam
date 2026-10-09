@@ -192,19 +192,35 @@ def get_processor(checkpoint_path: str = DEFAULT_CHECKPOINT) -> Sam3Processor:
                         return orig_fwd_grounding(*deep_cast_bf16(args), **deep_cast_bf16(kwargs))
                     GLOBAL_PROCESSOR.model.forward_grounding = fwd_grounding_bf16
                     
-                # Monkey-patch 10: 強制掃描所有未正確註冊為子模組 (Unregistered Modules) 的隱藏屬性 (例如 dot_prod_scoring_head) 並轉型
-                for module in GLOBAL_PROCESSOR.model.modules():
-                    for name, attr in vars(module).items():
-                        if isinstance(attr, torch.nn.Module):
-                            attr.to(torch.bfloat16)
-                        elif isinstance(attr, (list, tuple)):
-                            for item in attr:
-                                if isinstance(item, torch.nn.Module):
-                                    item.to(torch.bfloat16)
-                        elif isinstance(attr, dict):
-                            for k, v in attr.items():
-                                if isinstance(v, torch.nn.Module):
-                                    v.to(torch.bfloat16)
+                # Monkey-patch 10: 終極防禦機制 - 強制攔截並包裝模型內「所有」的 nn.Linear
+                # 無論是輸入特徵 (mat1) 從何處產生，只要進入 Linear 前一律強制轉為 bfloat16
+                def deep_patch_and_cast(obj):
+                    if isinstance(obj, torch.nn.Module):
+                        obj.to(torch.bfloat16)
+                        for m in obj.modules():
+                            m.to(torch.bfloat16)
+                            if isinstance(m, torch.nn.Linear) and not hasattr(m, "_bf16_patched"):
+                                orig_fwd = m.forward
+                                # 使用預設參數綁定 orig_fwd 避免閉包變數覆蓋問題
+                                def bf16_fwd(x, orig=orig_fwd):
+                                    if isinstance(x, torch.Tensor) and x.is_floating_point():
+                                        x = x.to(torch.bfloat16)
+                                    return orig(x)
+                                m.forward = bf16_fwd
+                                m._bf16_patched = True
+
+                deep_patch_and_cast(GLOBAL_PROCESSOR.model)
+                for name, attr in vars(GLOBAL_PROCESSOR.model).items():
+                    if isinstance(attr, torch.nn.Module):
+                        deep_patch_and_cast(attr)
+                    elif isinstance(attr, (list, tuple)):
+                        for item in attr:
+                            if isinstance(item, torch.nn.Module):
+                                deep_patch_and_cast(item)
+                    elif isinstance(attr, dict):
+                        for k, v in attr.items():
+                            if isinstance(v, torch.nn.Module):
+                                deep_patch_and_cast(v)
                     
     return GLOBAL_PROCESSOR
 
