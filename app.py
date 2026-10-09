@@ -130,23 +130,18 @@ def get_processor(checkpoint_path: str = DEFAULT_CHECKPOINT) -> Sam3Processor:
 
             if hasattr(GLOBAL_PROCESSOR.model, "_run_encoder"):
                 orig_run_enc = GLOBAL_PROCESSOR.model._run_encoder
-                def run_enc_bf16(backbone_out, prompt, *args, **kwargs):
-                    backbone_out = deep_cast_bf16(backbone_out)
-                    prompt = deep_cast_bf16(prompt)
+                def run_enc_bf16(*args, **kwargs):
                     new_args = deep_cast_bf16(args)
                     new_kwargs = deep_cast_bf16(kwargs)
-                    return orig_run_enc(backbone_out, prompt, *new_args, **new_kwargs)
+                    return orig_run_enc(*new_args, **new_kwargs)
                 GLOBAL_PROCESSOR.model._run_encoder = run_enc_bf16
                 
             if hasattr(GLOBAL_PROCESSOR.model, "_run_decoder"):
                 orig_run_dec = GLOBAL_PROCESSOR.model._run_decoder
-                def run_dec_bf16(backbone_out, encoder_out, prompt, *args, **kwargs):
-                    backbone_out = deep_cast_bf16(backbone_out)
-                    encoder_out = deep_cast_bf16(encoder_out)
-                    prompt = deep_cast_bf16(prompt)
+                def run_dec_bf16(*args, **kwargs):
                     new_args = deep_cast_bf16(args)
                     new_kwargs = deep_cast_bf16(kwargs)
-                    return orig_run_dec(backbone_out, encoder_out, prompt, *new_args, **new_kwargs)
+                    return orig_run_dec(*new_args, **new_kwargs)
                 GLOBAL_PROCESSOR.model._run_decoder = run_dec_bf16
                 
     return GLOBAL_PROCESSOR
