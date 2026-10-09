@@ -189,6 +189,20 @@ def get_processor(checkpoint_path: str = DEFAULT_CHECKPOINT) -> Sam3Processor:
                         return orig_fwd_grounding(*args, **kwargs)
                     GLOBAL_PROCESSOR.model.forward_grounding = fwd_grounding_bf16
                     
+                # Monkey-patch 10: 強制掃描所有未正確註冊為子模組 (Unregistered Modules) 的隱藏屬性 (例如 dot_prod_scoring_head) 並轉型
+                for module in GLOBAL_PROCESSOR.model.modules():
+                    for name, attr in vars(module).items():
+                        if isinstance(attr, torch.nn.Module):
+                            attr.to(torch.bfloat16)
+                        elif isinstance(attr, (list, tuple)):
+                            for item in attr:
+                                if isinstance(item, torch.nn.Module):
+                                    item.to(torch.bfloat16)
+                        elif isinstance(attr, dict):
+                            for k, v in attr.items():
+                                if isinstance(v, torch.nn.Module):
+                                    v.to(torch.bfloat16)
+                    
     return GLOBAL_PROCESSOR
 
 def parse_box_str(box_str):
