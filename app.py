@@ -124,8 +124,15 @@ def get_processor(checkpoint_path: str = DEFAULT_CHECKPOINT) -> Sam3Processor:
                     return {k: deep_cast_bf16(v) for k, v in obj.items()}
                 elif isinstance(obj, list):
                     return [deep_cast_bf16(v) for v in obj]
+                elif isinstance(obj, tuple) and hasattr(obj, '_fields'):  # namedtuple
+                    return type(obj)(*(deep_cast_bf16(v) for v in obj))
                 elif isinstance(obj, tuple):
                     return tuple(deep_cast_bf16(v) for v in obj)
+                # SAM3 might use custom objects for prompt
+                elif hasattr(obj, '__dict__'):
+                    for k, v in vars(obj).items():
+                        setattr(obj, k, deep_cast_bf16(v))
+                    return obj
                 return obj
 
             if hasattr(GLOBAL_PROCESSOR.model, "_run_encoder"):
@@ -172,21 +179,17 @@ def get_processor(checkpoint_path: str = DEFAULT_CHECKPOINT) -> Sam3Processor:
                         return orig_box_y(*args, **kwargs)
                     decoder.boxRPB_embed_y.forward = box_y_bf16
                     
-                # Monkey-patch 9: 攔截 _update_scores_and_boxes 和 forward_grounding，強制輸入為 bfloat16 (因為 Text Prompt 等特徵可能為 Float32)
+                # Monkey-patch 9: 攔截 _update_scores_and_boxes 和 forward_grounding，強制輸入為 bfloat16 (使用 deep_cast_bf16 以覆蓋 dict 或 class)
                 if hasattr(GLOBAL_PROCESSOR.model, "_update_scores_and_boxes"):
                     orig_update = GLOBAL_PROCESSOR.model._update_scores_and_boxes
                     def update_bf16(*args, **kwargs):
-                        args = tuple(a.to(torch.bfloat16) if isinstance(a, torch.Tensor) and a.is_floating_point() else a for a in args)
-                        kwargs = {k: v.to(torch.bfloat16) if isinstance(v, torch.Tensor) and v.is_floating_point() else v for k, v in kwargs.items()}
-                        return orig_update(*args, **kwargs)
+                        return orig_update(*deep_cast_bf16(args), **deep_cast_bf16(kwargs))
                     GLOBAL_PROCESSOR.model._update_scores_and_boxes = update_bf16
                     
                 if hasattr(GLOBAL_PROCESSOR.model, "forward_grounding"):
                     orig_fwd_grounding = GLOBAL_PROCESSOR.model.forward_grounding
                     def fwd_grounding_bf16(*args, **kwargs):
-                        args = tuple(a.to(torch.bfloat16) if isinstance(a, torch.Tensor) and a.is_floating_point() else a for a in args)
-                        kwargs = {k: v.to(torch.bfloat16) if isinstance(v, torch.Tensor) and v.is_floating_point() else v for k, v in kwargs.items()}
-                        return orig_fwd_grounding(*args, **kwargs)
+                        return orig_fwd_grounding(*deep_cast_bf16(args), **deep_cast_bf16(kwargs))
                     GLOBAL_PROCESSOR.model.forward_grounding = fwd_grounding_bf16
                     
                 # Monkey-patch 10: 強制掃描所有未正確註冊為子模組 (Unregistered Modules) 的隱藏屬性 (例如 dot_prod_scoring_head) 並轉型
