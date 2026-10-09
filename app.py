@@ -144,6 +144,15 @@ def get_processor(checkpoint_path: str = DEFAULT_CHECKPOINT) -> Sam3Processor:
                     return orig_run_dec(*new_args, **new_kwargs)
                 GLOBAL_PROCESSOR.model._run_decoder = run_dec_bf16
                 
+            # Monkey-patch 7: 強制將 Transformer Decoder 內部的 ref_point_head (MLP) 的輸入轉為 bfloat16
+            if hasattr(GLOBAL_PROCESSOR.model, "transformer") and hasattr(GLOBAL_PROCESSOR.model.transformer, "decoder"):
+                decoder = GLOBAL_PROCESSOR.model.transformer.decoder
+                if hasattr(decoder, "ref_point_head") and decoder.ref_point_head is not None:
+                    orig_ref_head = decoder.ref_point_head.forward
+                    def ref_head_bf16(x, *args, **kwargs):
+                        return orig_ref_head(x.to(torch.bfloat16), *args, **kwargs)
+                    decoder.ref_point_head.forward = ref_head_bf16
+                    
     return GLOBAL_PROCESSOR
 
 def parse_box_str(box_str):
