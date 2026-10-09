@@ -507,7 +507,7 @@ INDEX_HTML = """
         <div class="form-group">
           <label class="form-label">天空隔離門檻 (Max Gap)：<span id="gap_val">0.05</span></label>
           <div class="slider-row">
-            <input type="range" id="slider_gap" min="0.0" max="1.0" step="0.001" value="0.05" oninput="document.getElementById('gap_val').innerText = this.value">
+            <input type="range" id="slider_gap" min="0.0" max="1.0" step="0.01" value="0.05" oninput="document.getElementById('gap_val').innerText = this.value">
           </div>
         </div>
         <div class="form-group">

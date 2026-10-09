@@ -157,15 +157,19 @@ def get_processor(checkpoint_path: str = DEFAULT_CHECKPOINT) -> Sam3Processor:
                 if hasattr(decoder, "boxRPB_embed_x") and decoder.boxRPB_embed_x is not None:
                     decoder.boxRPB_embed_x.to(torch.bfloat16)
                     orig_box_x = decoder.boxRPB_embed_x.forward
-                    def box_x_bf16(x, *args, **kwargs):
-                        return orig_box_x(x.to(torch.bfloat16), *args, **kwargs)
+                    def box_x_bf16(*args, **kwargs):
+                        args = tuple(a.to(torch.bfloat16) if isinstance(a, torch.Tensor) and a.is_floating_point() else a for a in args)
+                        kwargs = {k: v.to(torch.bfloat16) if isinstance(v, torch.Tensor) and v.is_floating_point() else v for k, v in kwargs.items()}
+                        return orig_box_x(*args, **kwargs)
                     decoder.boxRPB_embed_x.forward = box_x_bf16
                     
                 if hasattr(decoder, "boxRPB_embed_y") and decoder.boxRPB_embed_y is not None:
                     decoder.boxRPB_embed_y.to(torch.bfloat16)
                     orig_box_y = decoder.boxRPB_embed_y.forward
-                    def box_y_bf16(y, *args, **kwargs):
-                        return orig_box_y(y.to(torch.bfloat16), *args, **kwargs)
+                    def box_y_bf16(*args, **kwargs):
+                        args = tuple(a.to(torch.bfloat16) if isinstance(a, torch.Tensor) and a.is_floating_point() else a for a in args)
+                        kwargs = {k: v.to(torch.bfloat16) if isinstance(v, torch.Tensor) and v.is_floating_point() else v for k, v in kwargs.items()}
+                        return orig_box_y(*args, **kwargs)
                     decoder.boxRPB_embed_y.forward = box_y_bf16
                     
     return GLOBAL_PROCESSOR
