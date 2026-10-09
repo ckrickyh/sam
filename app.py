@@ -103,6 +103,19 @@ def get_processor(checkpoint_path: str = DEFAULT_CHECKPOINT) -> Sam3Processor:
                     def box_proj_bf16(x, *args, **kwargs):
                         return orig_box_proj(x.to(torch.bfloat16), *args, **kwargs)
                     GLOBAL_PROCESSOR.model.geometry_encoder.boxes_pos_enc_project.forward = box_proj_bf16
+                    
+            # Monkey-patch 5: torchvision.ops.roi_align 內部寫死了 .float() 導致格式衝突，我們強制同步型態
+            import torchvision
+            if hasattr(torchvision.ops, "roi_align"):
+                orig_roi_align = torchvision.ops.roi_align
+                def roi_align_matched(input, rois, *args, **kwargs):
+                    if isinstance(rois, torch.Tensor):
+                        rois = rois.to(input.dtype)
+                    elif isinstance(rois, (list, tuple)):
+                        rois = type(rois)(r.to(input.dtype) if isinstance(r, torch.Tensor) else r for r in rois)
+                    return orig_roi_align(input, rois, *args, **kwargs)
+                torchvision.ops.roi_align = roi_align_matched
+                
     return GLOBAL_PROCESSOR
 
 def parse_box_str(box_str):
