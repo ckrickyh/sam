@@ -116,19 +116,37 @@ def get_processor(checkpoint_path: str = DEFAULT_CHECKPOINT) -> Sam3Processor:
                     return orig_roi_align(input, rois, *args, **kwargs)
                 torchvision.ops.roi_align = roi_align_matched
                 
-            # Monkey-patch 6: 攔截 SAM 3 主模型的 Transformer Encoder/Decoder，確保合併後的 prompt 被降轉回 bfloat16
+            # Monkey-patch 6: 攔截 SAM 3 主模型的 Transformer Encoder/Decoder，確保合併後的 prompt 以及 backbone_out (包含位置編碼) 被降轉回 bfloat16
+            def deep_cast_bf16(obj):
+                if isinstance(obj, torch.Tensor) and obj.is_floating_point():
+                    return obj.to(torch.bfloat16)
+                elif isinstance(obj, dict):
+                    return {k: deep_cast_bf16(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [deep_cast_bf16(v) for v in obj]
+                elif isinstance(obj, tuple):
+                    return tuple(deep_cast_bf16(v) for v in obj)
+                return obj
+
             if hasattr(GLOBAL_PROCESSOR.model, "_run_encoder"):
                 orig_run_enc = GLOBAL_PROCESSOR.model._run_encoder
                 def run_enc_bf16(backbone_out, prompt, *args, **kwargs):
-                    if isinstance(prompt, torch.Tensor): prompt = prompt.to(torch.bfloat16)
-                    return orig_run_enc(backbone_out, prompt, *args, **kwargs)
+                    backbone_out = deep_cast_bf16(backbone_out)
+                    prompt = deep_cast_bf16(prompt)
+                    new_args = deep_cast_bf16(args)
+                    new_kwargs = deep_cast_bf16(kwargs)
+                    return orig_run_enc(backbone_out, prompt, *new_args, **new_kwargs)
                 GLOBAL_PROCESSOR.model._run_encoder = run_enc_bf16
                 
             if hasattr(GLOBAL_PROCESSOR.model, "_run_decoder"):
                 orig_run_dec = GLOBAL_PROCESSOR.model._run_decoder
                 def run_dec_bf16(backbone_out, encoder_out, prompt, *args, **kwargs):
-                    if isinstance(prompt, torch.Tensor): prompt = prompt.to(torch.bfloat16)
-                    return orig_run_dec(backbone_out, encoder_out, prompt, *args, **kwargs)
+                    backbone_out = deep_cast_bf16(backbone_out)
+                    encoder_out = deep_cast_bf16(encoder_out)
+                    prompt = deep_cast_bf16(prompt)
+                    new_args = deep_cast_bf16(args)
+                    new_kwargs = deep_cast_bf16(kwargs)
+                    return orig_run_dec(backbone_out, encoder_out, prompt, *new_args, **new_kwargs)
                 GLOBAL_PROCESSOR.model._run_decoder = run_dec_bf16
                 
     return GLOBAL_PROCESSOR
