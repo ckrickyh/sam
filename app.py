@@ -192,35 +192,34 @@ def get_processor(checkpoint_path: str = DEFAULT_CHECKPOINT) -> Sam3Processor:
                         return orig_fwd_grounding(*deep_cast_bf16(args), **deep_cast_bf16(kwargs))
                     GLOBAL_PROCESSOR.model.forward_grounding = fwd_grounding_bf16
                     
-                # Monkey-patch 10: 終極防禦機制 - 強制攔截並包裝模型內「所有」的 nn.Linear
-                # 無論是輸入特徵 (mat1) 從何處產生，只要進入 Linear 前一律強制轉為 bfloat16
-                def deep_patch_and_cast(obj):
-                    if isinstance(obj, torch.nn.Module):
-                        obj.to(torch.bfloat16)
-                        for m in obj.modules():
-                            m.to(torch.bfloat16)
-                            if isinstance(m, torch.nn.Linear) and not hasattr(m, "_bf16_patched"):
-                                orig_fwd = m.forward
-                                # 使用預設參數綁定 orig_fwd 避免閉包變數覆蓋問題
-                                def bf16_fwd(x, orig=orig_fwd):
-                                    if isinstance(x, torch.Tensor) and x.is_floating_point():
-                                        x = x.to(torch.bfloat16)
-                                    return orig(x)
-                                m.forward = bf16_fwd
-                                m._bf16_patched = True
-
-                deep_patch_and_cast(GLOBAL_PROCESSOR.model)
-                for name, attr in vars(GLOBAL_PROCESSOR.model).items():
-                    if isinstance(attr, torch.nn.Module):
-                        deep_patch_and_cast(attr)
-                    elif isinstance(attr, (list, tuple)):
-                        for item in attr:
-                            if isinstance(item, torch.nn.Module):
-                                deep_patch_and_cast(item)
-                    elif isinstance(attr, dict):
-                        for k, v in attr.items():
-                            if isinstance(v, torch.nn.Module):
-                                deep_patch_and_cast(v)
+                # Monkey-patch 10: 終極防禦機制 - 直接攔截 PyTorch 底層核心運算
+                # 由於模型內部有大量自訂的注意力機制 (MultiheadAttention) 會直接呼叫 F.linear，外部的模組攔截無法涵蓋
+                # 因此我們直接在 torch.nn.functional 層級加上保護，只要發現矩陣相乘時 dtype 不一致，就強制對齊 weight 的 dtype。
+                import torch.nn.functional as F
+                
+                if not hasattr(F, "_bf16_patched"):
+                    orig_linear = F.linear
+                    def safe_linear(input, weight, bias=None):
+                        if input.is_floating_point() and weight.is_floating_point() and input.dtype != weight.dtype:
+                            input = input.to(weight.dtype)
+                        return orig_linear(input, weight, bias)
+                    F.linear = safe_linear
+                    
+                    orig_conv2d = F.conv2d
+                    def safe_conv2d(input, weight, bias=None, stride=1, padding=0, dilation=1, groups=1):
+                        if input.is_floating_point() and weight.is_floating_point() and input.dtype != weight.dtype:
+                            input = input.to(weight.dtype)
+                        return orig_conv2d(input, weight, bias, stride, padding, dilation, groups)
+                    F.conv2d = safe_conv2d
+                    
+                    orig_layer_norm = F.layer_norm
+                    def safe_layer_norm(input, normalized_shape, weight=None, bias=None, eps=1e-5):
+                        if weight is not None and input.is_floating_point() and weight.is_floating_point() and input.dtype != weight.dtype:
+                            input = input.to(weight.dtype)
+                        return orig_layer_norm(input, normalized_shape, weight, bias, eps)
+                    F.layer_norm = safe_layer_norm
+                    
+                    F._bf16_patched = True
                     
     return GLOBAL_PROCESSOR
 
