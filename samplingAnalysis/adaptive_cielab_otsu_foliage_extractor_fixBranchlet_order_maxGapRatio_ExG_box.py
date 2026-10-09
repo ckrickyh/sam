@@ -394,7 +394,7 @@ def process_image_cielab_adaptive(
         scores_trunk = None
 
     if raw_trunk is not None and len(raw_trunk) > 0:
-        trunk_np = raw_trunk.cpu().numpy().astype(bool)
+        trunk_np = raw_trunk.cpu().float().numpy().astype(bool)
         if trunk_np.ndim == 4:
             trunk_np = trunk_np.squeeze(1)
         elif trunk_np.ndim == 3 and trunk_np.shape[0] == 1 and trunk_np.shape[1] != h:
@@ -412,7 +412,7 @@ def process_image_cielab_adaptive(
             trunk_mask |= m
 
     # 3. 實例遮罩提取與初步淨化
-    c_np = raw_canopy.cpu().numpy().astype(bool)
+    c_np = raw_canopy.cpu().float().numpy().astype(bool)
     if c_np.ndim == 4:
         c_np = c_np.squeeze(1)
 
@@ -424,7 +424,7 @@ def process_image_cielab_adaptive(
         pure_m = cv2.morphologyEx(raw_m.astype(np.uint8), cv2.MORPH_OPEN, kernel_clean).astype(bool)
         cleaned_masks_list.append(pure_m)
 
-    box_list = [boxes[i].cpu().numpy() for i in range(num_detections)] if boxes is not None else []
+    box_list = [boxes[i].cpu().float().numpy() for i in range(num_detections)] if boxes is not None else []
     score_list = [float(scores[i].item()) for i in range(num_detections)]
 
     # 4. 階層超遮罩過濾 (Mega-mask Suppression)
