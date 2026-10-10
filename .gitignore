@@ -46,6 +46,7 @@ node_modules/
 
 # 忽略 YOLO 訓練圖檔 (248 MB) 與訓練掃描快取
 dataset/images/
+data
 dataset/labels/*.cache
 *.cache
 # 若想連同 data/ 原始高解析圖檔一起排除

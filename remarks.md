@@ -36,8 +36,26 @@ uv run python samplingAnalysis/app.py
 
 
 
+---
+
+## 四、 Hugging Face Space 部署與 BFloat16 型態陷阱排除 (Monkey-patch 策略)
+
+在將模型部署至 Hugging Face Space (ZeroGPU 基礎設施) 時，為節省顯示卡記憶體 (VRAM) 避免 OOM (Out Of Memory)，我們將主模型透過 `.to(torch.bfloat16)` 轉型。此操作在轉換過程中引發了深度學習框架底層的型態衝突，紀錄與解決方案如下：
+
+1. **核心報錯 (`mat1 and mat2 must have the same dtype, but got Float and BFloat16`)**：
+   * **問題原因**：SAM 3 內部包含了諸多自訂組件（如 Text Prompt Grounding 生成的張量、動態宣告的 `dot_prod_scoring_head` 等），這些物件未被註冊為正規的 `nn.Module`，導致 `to(bfloat16)` 無法完整遞迴轉換。當原生 Float32 的特徵進入 BFloat16 的權重層時，PyTorch 即會報錯。在本地端 (CPU/MPS) 因為未觸發 BFloat16 轉換，故無此問題。
+   * **全局防禦解法 (核彈級 Monkey-patch)**：單純攔截模組層級的 `nn.Linear` 仍無法阻擋底層 MultiheadAttention 直接呼叫 C++ 的 `F.linear`。最終解法為直接在 `app.py` 中全域攔截 `torch.nn.functional` 底層核心（`linear`, `conv2d`, `layer_norm`），只要運算前發現矩陣型態不一致，就強制將 `input` 對齊 `weight` 的型態。
+
+2. **引數深拷貝遺失修改問題 (`KeyError: 'pred_boxes'`)**：
+   * **問題原因**：實作參數轉型時，一開始使用了建立新字典的回傳方式（Deep Copy），導致 SAM 3 原始程式碼的 `_update_scores_and_boxes` 原地寫入 (In-place update) 結果（如 `"pred_boxes"`）被寫在分身字典上而遺失。
+   * **解法**：修改遞迴轉型函式 `deep_cast_bf16`，針對 `dict` 與 `list` 強制採用**原地修改 (In-place mutation)**，以保證物件的記憶體參考位址不變。
+
+3. **Numpy 型態不支援 (`TypeError: Got unsupported ScalarType BFloat16`)**：
+   * **問題原因**：BFloat16 是針對神經網路加速設計的特殊格式，Numpy 函式庫本身並不支援。
+   * **解法**：在影像後處理邏輯提取張量（如 bounding boxes, masks）時，於呼叫 `.numpy()` 前插入 `.float()` 進行轉型過濾。
 
 ---
+
 ## Testing
 uv run samplingAnalysis/adaptive_cielab_otsu_foliage_extractor_fixBranchlet_order_box.py --images data/IMG_20260901_141418.jpg --output-dir samplingAnalysis/output
 
@@ -59,3 +77,9 @@ deepseek 70b para 128gb
 ---
 vendor 
 香港 深圳
+
+---
+# 步驟一：專心做特徵萃取與產生標註（直接使用原腳本，不改寫）
+uv run scripts/adaptive_cielab_otsu_foliage_extractor_fixBranchlet_order_maxGapRatio_ExG.py --data-dir data/
+# 步驟二：專心做資料集切分與建立 data.yaml（使用上一篇提供的腳本）
+uv run scripts/split_yolo_dataset.py

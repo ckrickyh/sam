@@ -495,9 +495,9 @@ INDEX_HTML = """
           </div>
         </div>
         <div class="form-group">
-          <label class="form-label">樹幹負向門檻：<span id="neg_val">0.155</span></label>
+          <label class="form-label">樹幹偵測門檻：<span id="trunk_val">0.155</span></label>
           <div class="slider-row">
-            <input type="range" id="slider_neg" min="0.05" max="0.50" step="0.005" value="0.155" oninput="document.getElementById('neg_val').innerText = this.value">
+            <input type="range" id="slider_trunk" min="0.05" max="0.50" step="0.005" value="0.155" oninput="document.getElementById('trunk_val').innerText = this.value">
           </div>
         </div>
       </div>
@@ -802,7 +802,7 @@ INDEX_HTML = """
       formData.append('canopy_box', document.getElementById('canopy_box_input').value);
       formData.append('trunk_box', document.getElementById('trunk_box_input').value);
       formData.append('confidence_threshold', document.getElementById('slider_conf').value);
-      formData.append('negative_threshold', document.getElementById('slider_neg').value);
+      formData.append('trunk_threshold', document.getElementById('slider_trunk').value);
       formData.append('max_gap_ratio', document.getElementById('slider_gap').value);
       formData.append('exg_threshold', document.getElementById('slider_exg').value);
 
@@ -902,7 +902,7 @@ def api_analyze(
     canopy_box: str = Form(""),
     trunk_box: str = Form(""),
     confidence_threshold: float = Form(0.25),
-    negative_threshold: float = Form(0.155),
+    trunk_threshold: float = Form(0.155),
     max_gap_ratio: float = Form(0.01),
     exg_threshold: float = Form(0.015),
 ):
@@ -937,7 +937,7 @@ def api_analyze(
             canopy_box=canopy_parsed,
             trunk_box=trunk_parsed,
             confidence_threshold=confidence_threshold,
-            negative_threshold=negative_threshold,
+            trunk_threshold=trunk_threshold,
             max_gap_ratio=max_gap_ratio,
             exg_threshold=exg_threshold,
             output_dir=out_dir,

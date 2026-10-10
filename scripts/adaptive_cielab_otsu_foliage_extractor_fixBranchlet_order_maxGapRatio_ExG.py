@@ -17,6 +17,7 @@
 """
 
 import argparse
+import json
 from pathlib import Path
 import sys
 import cv2
@@ -265,18 +266,50 @@ def heal_and_refine_wood_trunk(
     return smooth_trunk, total_wood
 
 
+def mask_to_normalized_polygons(
+    binary_mask: np.ndarray,
+    min_area_px: int = 40,
+    epsilon_ratio: float = 0.0025,
+) -> list[list[float]]:
+    """將二值遮罩轉換為 YOLO 實例分割 (YOLO-seg) 正規化多邊形頂點序列 [[x1, y1, x2, y2, ...], ...]"""
+    if binary_mask is None or np.sum(binary_mask) == 0:
+        return []
+    h, w = binary_mask.shape[:2]
+    contours, _ = cv2.findContours(binary_mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    polygons = []
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+        if area < min_area_px:
+            continue
+        # 使用 Douglas-Peucker 演算法平滑化並精簡頂點數，避免過度擬合
+        epsilon = max(epsilon_ratio * cv2.arcLength(cnt, True), 1.0)
+        approx = cv2.approxPolyDP(cnt, epsilon, True)
+        if len(approx) < 3:
+            continue
+        pts = approx.reshape(-1, 2)
+        poly = []
+        for x, y in pts:
+            norm_x = max(0.0, min(1.0, float(x) / w))
+            norm_y = max(0.0, min(1.0, float(y) / h))
+            poly.extend([round(norm_x, 6), round(norm_y, 6)])
+        if len(poly) >= 6:
+            polygons.append(poly)
+    return polygons
+
+
 def process_image_cielab_adaptive(
     image_path: str | Path,
     processor: Sam3Processor,
     prompt: str = "tree subcanopy",
-    negative_prompt: str = "tree trunk, tree branch",
+    trunk_prompt: str = "tree trunk, tree branch",
     confidence_threshold: float = 0.25,
-    negative_threshold: float = 0.155,
+    trunk_threshold: float = 0.155,
     envelope_ratio: float = 0.03,
     max_gap_ratio: float = 0.01,
     exg_threshold: float = 0.015,
     output_dir: Path | None = None,
     artifact_dir: Path | None = None,
+    yolo_dir: Path | None = None,
 ) -> dict:
     """針對單張影像執行主角樹評分排序、語意樹幹修復與自適應 CIELAB a* 拓撲分析"""
     img_path = Path(image_path)
@@ -307,10 +340,10 @@ def process_image_cielab_adaptive(
     green_mask = extract_green_vegetation_mask(img_rgb, exg_threshold=exg_threshold)
 
     # 2. SAM 3 語意木質樹幹推論 (處理非啡色樹皮)
-    processor.set_confidence_threshold(negative_threshold)
+    processor.set_confidence_threshold(trunk_threshold)
     trunk_mask = np.zeros((h, w), dtype=bool)
-    if negative_prompt and negative_prompt.strip():
-        res_trunk = processor.set_text_prompt(prompt=negative_prompt, state=state)
+    if trunk_prompt and trunk_prompt.strip():
+        res_trunk = processor.set_text_prompt(prompt=trunk_prompt, state=state)
         raw_trunk = res_trunk.get("masks", None)
         scores_trunk = res_trunk.get("scores", None)
         if raw_trunk is not None and len(raw_trunk) > 0:
@@ -574,6 +607,28 @@ def process_image_cielab_adaptive(
         plt.savefig(artifact_dir / f"{stem}_cielab_otsu_render.png", bbox_inches="tight")
     plt.close()
 
+    # 11. 提取 YOLO 實例分割多邊形 (Class 0: Crown, Class 1: Trunk, Class 2: Nearby Trees)
+    primary_crown_polys = mask_to_normalized_polygons(canopy_envelope)
+    trunk_wood_polys = mask_to_normalized_polygons(total_wood_mask)
+    nearby_tree_polys = []
+    for cand in nearby_candidates:
+        c_mask = filtered_masks[cand["index"]]
+        nearby_tree_polys.extend(mask_to_normalized_polygons(c_mask))
+
+    # 若指定 yolo_dir，輸出標準 YOLO-seg .txt 標註檔
+    if yolo_dir:
+        yolo_dir.mkdir(parents=True, exist_ok=True)
+        txt_path = yolo_dir / f"{stem}.txt"
+        yolo_lines = []
+        for p in primary_crown_polys:
+            yolo_lines.append("0 " + " ".join(f"{v:.6f}" for v in p))
+        for p in trunk_wood_polys:
+            yolo_lines.append("1 " + " ".join(f"{v:.6f}" for v in p))
+        for p in nearby_tree_polys:
+            yolo_lines.append("2 " + " ".join(f"{v:.6f}" for v in p))
+        with open(txt_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(yolo_lines) + ("\n" if yolo_lines else ""))
+
     return {
         "stem": stem,
         "primary_score": primary_info["composite_score"],
@@ -589,6 +644,9 @@ def process_image_cielab_adaptive(
         "net_porosity_pct": net_porosity_pct,
         "wood_ratio_pct": wood_ratio_pct,
         "method_used": method_used,
+        "primary_crown_polygons": json.dumps(primary_crown_polys),
+        "trunk_wood_polygons": json.dumps(trunk_wood_polys),
+        "nearby_tree_polygons": json.dumps(nearby_tree_polys),
     }
 
 
@@ -610,6 +668,8 @@ def main():
     )
     parser.add_argument("--exg-threshold", type=float, default=0.015, help="超綠指數 (ExG) 植被門檻值 (預設: 0.015)")
     parser.add_argument("--csv-name", type=str, default="cielab_otsu_summary.csv", help="量化結果 CSV 檔名")
+    parser.add_argument("--export-yolo", action="store_true", default=True, help="是否同時匯出標準 YOLO-seg 標註檔 (.txt) 至輸出目錄 (預設開啟)")
+    parser.add_argument("--yolo-dir", type=str, default=None, help="YOLO 標註輸出目錄 (預設為 output-dir/yolo_labels)")
     args = parser.parse_args()
 
     # 1. 蒐集待處理影像清單
@@ -632,11 +692,13 @@ def main():
 
     out_dir = Path(args.output_dir)
     art_dir = Path(args.artifact_dir) if args.artifact_dir else None
+    yolo_export_dir = Path(args.yolo_dir) if args.yolo_dir else (out_dir / "yolo_labels")
 
     run_device = args.device if args.device else get_optimal_device()
     print(f"==================================================")
     print(f"★ 批次掃描目標：共 {total_images} 張影像 (來源: {args.data_dir if not args.images else '指定列表'})")
     print(f"★ 輸出圖檔目錄：{out_dir}")
+    print(f"★ YOLO 標註目錄：{yolo_export_dir if args.export_yolo else '未啟用'}")
     print(f"★ 正在載入 SAM 3 模型: {args.checkpoint} ({run_device})...")
     print(f"==================================================")
 
@@ -656,6 +718,7 @@ def main():
                 exg_threshold=args.exg_threshold,
                 output_dir=out_dir,
                 artifact_dir=art_dir,
+                yolo_dir=yolo_export_dir if args.export_yolo else None,
             )
             results.append(res)
         except Exception as e:
@@ -669,6 +732,54 @@ def main():
         df = pd.DataFrame(results)
         df.to_csv(csv_path, index=False, encoding="utf-8-sig")
         print(f"\n★ 批次量化報表已儲存至：{csv_path}")
+
+        # 3. 儲存實例分割專屬標註 CSV (格式: stem, class_id, class_name, point_count, polygon_coords)
+        yolo_records = []
+        for r in results:
+            if "error" in r or "primary_crown_polygons" not in r:
+                continue
+            stem_name = r["stem"]
+            c0 = json.loads(r["primary_crown_polygons"])
+            c1 = json.loads(r["trunk_wood_polygons"])
+            c2 = json.loads(r["nearby_tree_polygons"])
+            for p in c0:
+                yolo_records.append({
+                    "stem": stem_name,
+                    "class_id": 0,
+                    "class_name": "primary_crown",
+                    "point_count": len(p) // 2,
+                    "polygon_coords": " ".join(f"{v:.6f}" for v in p),
+                })
+            for p in c1:
+                yolo_records.append({
+                    "stem": stem_name,
+                    "class_id": 1,
+                    "class_name": "trunk_wood",
+                    "point_count": len(p) // 2,
+                    "polygon_coords": " ".join(f"{v:.6f}" for v in p),
+                })
+            for p in c2:
+                yolo_records.append({
+                    "stem": stem_name,
+                    "class_id": 2,
+                    "class_name": "nearby_tree",
+                    "point_count": len(p) // 2,
+                    "polygon_coords": " ".join(f"{v:.6f}" for v in p),
+                })
+
+        if yolo_records:
+            yolo_csv_path = out_dir / "yolo_segmentation_annotations.csv"
+            df_yolo = pd.DataFrame(yolo_records)
+            df_yolo.to_csv(yolo_csv_path, index=False, encoding="utf-8-sig")
+            print(f"★ YOLO 實例分割標註 CSV 已儲存至：{yolo_csv_path}")
+
+        # 4. 輸出 YOLO 類別定義檔 classes.txt
+        if args.export_yolo and yolo_export_dir:
+            yolo_export_dir.mkdir(parents=True, exist_ok=True)
+            classes_path = yolo_export_dir / "classes.txt"
+            with open(classes_path, "w", encoding="utf-8") as f:
+                f.write("0: primary_crown\n1: trunk_wood\n2: nearby_tree\n")
+            print(f"★ YOLO 類別對應表已儲存至：{classes_path}")
 
     print("\n主角樹評分與拓撲補洞自適應分析全部完成！輸出圖檔已儲存。")
 

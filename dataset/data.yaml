@@ -1,0 +1,8 @@
+path: /Users/rickyho/Documents/github/sam/dataset
+train: images/train
+val: images/val
+
+names:
+  0: primary_crown
+  1: trunk_wood
+  2: nearby_tree

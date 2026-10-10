@@ -239,7 +239,7 @@ def parse_box_str(box_str):
     return None
 
 @spaces.GPU(duration=120)
-def run_analysis_gradio(img_filepath, canopy_box_str, trunk_box_str, conf_thresh, neg_thresh, max_gap_ratio, exg_thresh):
+def run_analysis_gradio(img_filepath, canopy_box_str, trunk_box_str, conf_thresh, trunk_thresh, max_gap_ratio, exg_thresh):
     if not img_filepath:
         return None, "請先上傳圖片"
 
@@ -257,7 +257,7 @@ def run_analysis_gradio(img_filepath, canopy_box_str, trunk_box_str, conf_thresh
             canopy_box=canopy_parsed,
             trunk_box=trunk_parsed,
             confidence_threshold=conf_thresh,
-            negative_threshold=neg_thresh,
+            trunk_threshold=trunk_thresh,
             max_gap_ratio=max_gap_ratio,
             exg_threshold=exg_thresh,
             output_dir=out_dir,
@@ -284,7 +284,7 @@ with gr.Blocks(title="Crown Porosity") as demo:
             canopy_box = gr.Textbox(label="樹冠邊界框 (Canopy Box)", placeholder="例如: 100, 100, 500, 500 (可留空)")
             trunk_box = gr.Textbox(label="樹幹邊界框 (Trunk Box)", placeholder="例如: 200, 400, 300, 600 (可留空)")
             conf_thresh = gr.Slider(0.0, 1.0, value=0.25, label="SAM 3 Threshold")
-            neg_thresh = gr.Slider(0.0, 1.0, value=0.155, label="Negative Threshold")
+            trunk_thresh = gr.Slider(0.0, 1.0, value=0.155, label="Trunk Threshold")
             max_gap_ratio_slider = gr.Slider(0.0, 1.0, value=0.05, label="Max Gap Ratio inside Crown")
             exg_thresh_slider = gr.Slider(0.0, 0.05, step=0.001, value=0.015, label="Green Leaf ExG Threshold")
             btn = gr.Button("Start Analysis (ZeroGPU)", variant="primary")
@@ -295,7 +295,7 @@ with gr.Blocks(title="Crown Porosity") as demo:
 
     btn.click(
         fn=run_analysis_gradio,
-        inputs=[img_in, canopy_box, trunk_box, conf_thresh, neg_thresh, max_gap_ratio_slider, exg_thresh_slider],
+        inputs=[img_in, canopy_box, trunk_box, conf_thresh, trunk_thresh, max_gap_ratio_slider, exg_thresh_slider],
         outputs=[img_out, metrics_out]
     )
 

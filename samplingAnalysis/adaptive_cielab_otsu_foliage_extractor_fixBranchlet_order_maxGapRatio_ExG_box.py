@@ -329,9 +329,9 @@ def process_image_cielab_adaptive(
     prompt: str = "tree subcanopy",
     canopy_box: list[float] | tuple[float, float, float, float] | None = None,
     trunk_box: list[float] | tuple[float, float, float, float] | None = None,
-    negative_prompt: str = "tree trunk, tree branch",
+    trunk_prompt: str = "tree trunk, tree branch",
     confidence_threshold: float = 0.25,
-    negative_threshold: float = 0.155,
+    trunk_threshold: float = 0.155,
     envelope_ratio: float = 0.03,
     max_gap_ratio: float = 0.01,
     exg_threshold: float = 0.015,
@@ -374,7 +374,7 @@ def process_image_cielab_adaptive(
     green_mask = extract_green_vegetation_mask(img_rgb, exg_threshold=exg_threshold)
 
     # 2. SAM 3 樹幹幾何/語意推論 (優先使用 trunk_box，未提供則使用語意提示)
-    processor.set_confidence_threshold(negative_threshold)
+    processor.set_confidence_threshold(trunk_threshold)
     trunk_mask = np.zeros((h, w), dtype=bool)
 
     # 重置提示詞狀態 (保留已計算之視覺 Backbone 特徵，零額外耗時)
@@ -385,8 +385,8 @@ def process_image_cielab_adaptive(
         res_trunk = processor.add_geometric_prompt(box=trunk_cxcywh, label=True, state=state)
         raw_trunk = res_trunk.get("masks", None)
         scores_trunk = res_trunk.get("scores", None)
-    elif negative_prompt and negative_prompt.strip():
-        res_trunk = processor.set_text_prompt(prompt=negative_prompt, state=state)
+    elif trunk_prompt and trunk_prompt.strip():
+        res_trunk = processor.set_text_prompt(prompt=trunk_prompt, state=state)
         raw_trunk = res_trunk.get("masks", None)
         scores_trunk = res_trunk.get("scores", None)
     else:
@@ -731,16 +731,16 @@ def main():
         nargs=4,
         type=float,
         default=None,
-        help="樹幹幾何方框提示 [xmin ymin xmax ymax] (若未指定，則自動使用 negative-prompt 語意提示)",
+        help="樹幹幾何方框提示 [xmin ymin xmax ymax] (若未指定，則自動使用 trunk-prompt 語意提示)",
     )
     parser.add_argument(
-        "--negative-prompt",
+        "--trunk-prompt",
         type=str,
         default="tree trunk, tree branch",
         help="樹幹備用語意提示詞 (當未指定 --trunk-box 時生效)",
     )
     parser.add_argument("--confidence-threshold", type=float, default=0.25, help="樹冠偵測信心門檻 (預設: 0.25)")
-    parser.add_argument("--negative-threshold", type=float, default=0.155, help="樹幹偵測信心門檻 (預設: 0.155)")
+    parser.add_argument("--trunk-threshold", type=float, default=0.155, help="樹幹偵測信心門檻 (預設: 0.155)")
     parser.add_argument("--envelope-ratio", type=float, default=0.03, help="樹冠空間包絡半徑比例 (預設: 0.03)")
     parser.add_argument(
         "--max-gap-ratio",
@@ -794,9 +794,9 @@ def main():
                 prompt=args.prompt,
                 canopy_box=args.box,
                 trunk_box=args.trunk_box,
-                negative_prompt=args.negative_prompt,
+                trunk_prompt=args.trunk_prompt,
                 confidence_threshold=args.confidence_threshold,
-                negative_threshold=args.negative_threshold,
+                trunk_threshold=args.trunk_threshold,
                 envelope_ratio=args.envelope_ratio,
                 max_gap_ratio=args.max_gap_ratio,
                 exg_threshold=args.exg_threshold,

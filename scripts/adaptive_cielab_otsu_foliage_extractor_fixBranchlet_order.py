@@ -224,9 +224,9 @@ def process_image_cielab_adaptive(
     image_path: str | Path,
     processor: Sam3Processor,
     prompt: str = "tree subcanopy",
-    negative_prompt: str = "tree trunk, tree branch",
+    trunk_prompt: str = "tree trunk, tree branch",
     confidence_threshold: float = 0.25,
-    negative_threshold: float = 0.155,
+    trunk_threshold: float = 0.155,
     output_dir: Path | None = None,
     artifact_dir: Path | None = None,
 ) -> dict:
@@ -259,10 +259,10 @@ def process_image_cielab_adaptive(
     green_mask = extract_green_vegetation_mask(img_rgb)
 
     # 2. SAM 3 語意木質樹幹推論 (處理非啡色樹皮)
-    processor.set_confidence_threshold(negative_threshold)
+    processor.set_confidence_threshold(trunk_threshold)
     trunk_mask = np.zeros((h, w), dtype=bool)
-    if negative_prompt and negative_prompt.strip():
-        res_trunk = processor.set_text_prompt(prompt=negative_prompt, state=state)
+    if trunk_prompt and trunk_prompt.strip():
+        res_trunk = processor.set_text_prompt(prompt=trunk_prompt, state=state)
         raw_trunk = res_trunk.get("masks", None)
         scores_trunk = res_trunk.get("scores", None)
         if raw_trunk is not None and len(raw_trunk) > 0:
