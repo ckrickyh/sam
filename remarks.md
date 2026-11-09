@@ -71,7 +71,9 @@ uv run scripts/adaptive_cielab_otsu_foliage_extractor_fixBranchlet_order_maxGapR
 uv run scripts/split_yolo_dataset.py
 
 ---
-# huggingface ac: ckrickydevs
-
+# Git
+huggingface ac: ckrickydevs
+hf auth login (AccessToken)
+git push space main
 
 
