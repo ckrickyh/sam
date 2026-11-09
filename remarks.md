@@ -65,21 +65,13 @@ adaptive_cielab_otsu_foliage_extractor_fixBranchlet_order.py 為原型
 adaptive_cielab_otsu_foliage_extractor_fixBranchlet_order_box.py 為連接 gradio (基於adaptive_cielab_otsu_foliage_extractor_fixBranchlet_order.py開發)
 
 ---
-Scratch folder for study only
-
----
-gpu ram 125gb
-qwen 3.6 125b para 128gb
-deepseek 70b para 128gb
-
-50萬 （10萬裝機）
-
----
-vendor 
-香港 深圳
-
----
-# 步驟一：專心做特徵萃取與產生標註（直接使用原腳本，不改寫）
+# 步驟一：特徵萃取與產生標註（直接使用原腳本，不改寫）
 uv run scripts/adaptive_cielab_otsu_foliage_extractor_fixBranchlet_order_maxGapRatio_ExG.py --data-dir data/
-# 步驟二：專心做資料集切分與建立 data.yaml（使用上一篇提供的腳本）
+# 步驟二：資料集切分與建立 data.yaml（使用上一篇提供的腳本）
 uv run scripts/split_yolo_dataset.py
+
+---
+# huggingface ac: ckrickydevs
+
+
+

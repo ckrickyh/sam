@@ -1,3 +1,4 @@
+# app for hf
 try:
     import spaces
 except ImportError:
@@ -283,7 +284,7 @@ with gr.Blocks(title="Crown Porosity") as demo:
             img_in = gr.Image(type="filepath", label="上傳樹木圖片")
             canopy_box = gr.Textbox(label="樹冠邊界框 (Canopy Box)", placeholder="例如: 100, 100, 500, 500 (可留空)")
             trunk_box = gr.Textbox(label="樹幹邊界框 (Trunk Box)", placeholder="例如: 200, 400, 300, 600 (可留空)")
-            conf_thresh = gr.Slider(0.0, 1.0, value=0.25, label="SAM 3 Threshold")
+            conf_thresh = gr.Slider(0.0, 1.0, value=0.25, label="Model Threshold")
             trunk_thresh = gr.Slider(0.0, 1.0, value=0.155, label="Trunk Threshold")
             max_gap_ratio_slider = gr.Slider(0.0, 1.0, value=0.05, label="Max Gap Ratio inside Crown")
             exg_thresh_slider = gr.Slider(0.0, 0.05, step=0.001, value=0.015, label="Green Leaf ExG Threshold")
