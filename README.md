@@ -72,7 +72,7 @@ Results can be affected by camera angle, lighting, occlusion, and tree species. 
 3. **CIELAB a\* adaptive color analysis**:
    * Uses the CIE color-space threshold ($a^* < 128$) as a green reference, combined with Otsu adaptive thresholding and a normalized Excess Green (ExG) + HSV safeguard to help retain leaves in highlights and shadows.
 4. **Woody-structure repair and extraction of backlit fine branches**:
-   * Uses OpenCV contour filling to address dark sampling artifacts and separates backlit fine branches in color space ($L^* < 95, a^* \ge 126$), maintaining the canopy-area relationship:
+   * Repairs only enclosed holes no larger than 2% of the raw SAM trunk-mask area, avoiding the classification of unrelated canopy gaps as wood. SAM trunk pixels take priority over green-color heuristics; green pixels outside the trunk mask remain protected from wood classification. The JSON reports the number of repaired holes and pixels. It also separates backlit fine branches in color space ($L^* < 95, a^* \ge 126$), maintaining the canopy-area relationship:
      $$\text{Canopy Envelope} = \text{Green Foliage} + \text{Woody Structures} + \text{Gaps}$$
 5. **Macro sky void isolation**:
    * Uses morphological bridging and connected-component analysis to filter large background sky openings between branches, reducing inflation of the canopy envelope and separating them from smaller gaps.

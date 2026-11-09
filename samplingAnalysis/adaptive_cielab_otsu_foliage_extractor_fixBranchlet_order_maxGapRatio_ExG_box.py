@@ -293,25 +293,42 @@ def heal_and_refine_wood_trunk(
     img_bgr: np.ndarray,
     canopy_envelope: np.ndarray,
     green_mask: np.ndarray | None = None,
+    refinement_stats: dict[str, int] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """利用 OpenCV 形態學修復 SAM 3 樹幹破洞，並提取外圍逆光細枝 (融合 ExG 綠葉絕對防護)"""
     h, w = raw_trunk_mask.shape[:2]
     green_barrier = green_mask if green_mask is not None else np.zeros((h, w), dtype=bool)
 
-    # 1. 消除 SAM 3 樹幹內部小於 3000px 的採樣黑洞 (嚴格限制於非 ExG 綠葉區域，防止塗滿夾縫樹葉)
-    trunk_inv = (~raw_trunk_mask) & (~green_barrier)
+    # 1. 僅填補 SAM 樹幹遮罩內部、未連通至影像邊界的小型黑洞。
+    trunk_inv = ~raw_trunk_mask
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(trunk_inv.astype(np.uint8), connectivity=8)
+    # Scale the hole cutoff with the raw SAM trunk-mask area.
+    max_hole_area = int(np.count_nonzero(raw_trunk_mask) * 0.02)
+    border_labels = set(
+        np.unique(np.concatenate((labels[0, :], labels[-1, :], labels[:, 0], labels[:, -1])))
+    )
 
     filled_trunk = raw_trunk_mask.copy()
+    filled_hole_count = 0
+    filled_hole_pixels = 0
     for label_idx in range(1, num_labels):
         area = stats[label_idx, cv2.CC_STAT_AREA]
-        if area < 3000:
-            filled_trunk |= (labels == label_idx)
+        if area <= max_hole_area and label_idx not in border_labels:
+            hole = (labels == label_idx) & (~green_barrier) & canopy_envelope
+            hole_pixels = int(np.count_nonzero(hole))
+            if hole_pixels:
+                filled_trunk |= hole
+                filled_hole_count += 1
+                filled_hole_pixels += hole_pixels
 
-    # 2. 形態學平滑閉運算 (再次減去 ExG 綠葉，防止邊緣膨脹溢出侵蝕相鄰樹葉)
+    if refinement_stats is not None:
+        refinement_stats["trunk_holes_filled_count"] = filled_hole_count
+        refinement_stats["trunk_hole_pixels_filled"] = filled_hole_pixels
+
+    # 2. 平滑樹幹遮罩；綠色只阻擋形態學新增區域，不覆蓋 SAM 直接判定的樹幹像素。
     kernel_heal = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
     smooth_trunk = cv2.morphologyEx(filled_trunk.astype(np.uint8), cv2.MORPH_CLOSE, kernel_heal).astype(bool)
-    smooth_trunk = smooth_trunk & (~green_barrier) & canopy_envelope
+    smooth_trunk = smooth_trunk & (~green_barrier | raw_trunk_mask) & canopy_envelope
 
     # 3. 提取外圍微觀逆光細枝 (僅在非綠葉區域尋找: L* < 95 且 a* >= 126)
     lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
@@ -319,7 +336,7 @@ def heal_and_refine_wood_trunk(
     fine_branches = (l_chan < 95) & (a_chan >= 126) & canopy_envelope & (~smooth_trunk) & (~green_barrier)
 
     # 總木質部 = SAM 3 樹幹主骨架 + 外圍逆光細枝 (全數剔除綠葉)
-    total_wood = (smooth_trunk | fine_branches) & (~green_barrier)
+    total_wood = smooth_trunk | fine_branches
     return smooth_trunk, total_wood
 
 
@@ -509,11 +526,16 @@ def process_image_cielab_adaptive(
         leaf_chroma_mask = primary_mask & canopy_envelope
 
     # 8. 融合 SAM 3 語意樹幹 + OpenCV 形態學修復 (帶入 ExG 綠葉阻隔壁壘)
+    trunk_refinement_stats = {
+        "trunk_holes_filled_count": 0,
+        "trunk_hole_pixels_filled": 0,
+    }
     smooth_trunk, total_wood_mask = heal_and_refine_wood_trunk(
         raw_trunk_mask=trunk_mask,
         img_bgr=img_bgr,
         canopy_envelope=canopy_envelope,
         green_mask=green_mask,
+        refinement_stats=trunk_refinement_stats,
     )
 
     # 樹冠暗部非天空判定 (自然光學鐵律：白天仰拍時，透光天空必定高亮，暗部絕不可能是穿透天空)
@@ -537,14 +559,14 @@ def process_image_cielab_adaptive(
     flare_green_leaf = (g_chan > r_chan + 4) & (~is_pure_white_sky)
     backlight_leaf_mask = ((a_chan < 128) | flare_green_leaf) & (~is_pure_white_sky) & canopy_envelope
 
-    # 鮮綠植物保護盾：符合 ExG/HSV 綠色且 a* < 128 (符合 CIE 綠色界線) 具備絕對豁免權
+    # 綠色保護盾避免啡色啟發式誤判葉片；SAM 樹幹遮罩在下方仍優先。
     strong_green_shield = green_mask & (a_chan < 128)
-    effective_trunk = (smooth_trunk | dark_wood_rescue) & (~strong_green_shield)
+    effective_trunk = smooth_trunk | (dark_wood_rescue & (~strong_green_shield))
 
     pure_foliage_mask = (leaf_chroma_mask | strong_green_shield | dark_foliage_rescue | backlight_leaf_mask) & (~effective_trunk) & canopy_envelope
 
     # 總木質部：嚴格扣除純葉片與 ExG 綠葉保護盾，徹底杜絕樹葉被誤判為啡色木質
-    total_wood_mask = ((effective_trunk | total_wood_mask) & (~pure_foliage_mask) & (~strong_green_shield)) & canopy_envelope
+    total_wood_mask = (effective_trunk | total_wood_mask) & (~pure_foliage_mask) & canopy_envelope
 
     # 隔離內部大範圍天空 (若單一孔洞佔比超過 max_gap_ratio)
     raw_gaps_mask = canopy_envelope & (~pure_foliage_mask) & (~total_wood_mask)
@@ -691,6 +713,8 @@ def process_image_cielab_adaptive(
         "wood_pixels": wood_px,
         "gaps_pixels": gaps_px,
         "macro_sky_pixels": macro_sky_px,
+        "trunk_holes_filled_count": trunk_refinement_stats["trunk_holes_filled_count"],
+        "trunk_hole_pixels_filled": trunk_refinement_stats["trunk_hole_pixels_filled"],
         "canopy_density_pct": canopy_density_pct,
         "foliage_cover_pct": foliage_cover_pct,
         "canopy_porosity_pct": canopy_porosity_pct,
